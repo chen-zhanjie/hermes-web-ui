@@ -19,17 +19,35 @@ const common = ref<Record<string, any>>({})
 const profileConfig = ref<Record<string, any>>({})
 const bindings = ref<GeweBinding[]>([])
 const invites = ref<GeweInvite[]>([])
+const manualBindingType = ref<'user' | 'group'>('user')
 const manualUserId = ref('')
 const manualUserName = ref('')
+const manualListenAll = ref(false)
 const inviteLabel = ref('')
 
 const profileOptions = computed(() => profilesStore.profiles.map(p => ({ label: p.name, value: p.name })))
-const callbackUrl = computed(() => `${window.location.origin}/gewe/callback`)
+const inboundMode = computed(() => String(common.value.inbound_mode || 'direct-callback'))
+const groupPolicy = computed(() => String(common.value.group_policy || 'paired'))
+const usesCallbackIngress = computed(() => ['direct-callback', 'relay-callback'].includes(inboundMode.value))
+const usesRelayIngress = computed(() => ['relay-callback', 'relay-sse'].includes(inboundMode.value))
+const usesRelaySse = computed(() => inboundMode.value === 'relay-sse')
+const usesRelayCallback = computed(() => inboundMode.value === 'relay-callback')
+const groupEnabled = computed(() => !['disabled', 'off', 'none'].includes(groupPolicy.value))
+const showGroupAllowedChats = computed(() => groupPolicy.value === 'allowlist' || !!String(common.value.group_allowed_chats || '').trim())
+const callbackHost = computed(() => String(common.value.callback_host || '0.0.0.0'))
+const callbackPort = computed(() => String(common.value.callback_port || '8656'))
+const callbackPath = computed(() => String(common.value.callback_path || (usesRelayCallback.value ? '/gewe/relay' : '/gewe/callback')))
+const callbackUrl = computed(() => {
+  const host = callbackHost.value === '0.0.0.0' ? '127.0.0.1' : callbackHost.value
+  const bracketedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+  const path = callbackPath.value.startsWith('/') ? callbackPath.value : `/${callbackPath.value}`
+  return `http://${bracketedHost}:${callbackPort.value}${path}`
+})
 
 const inboundModeOptions = [
-  { label: 'Web UI callback', value: 'web-ui-callback' },
-  { label: 'Webhook-router callback', value: 'relay-callback' },
-  { label: 'Webhook-router SSE', value: 'relay-sse' },
+  { label: t('gewe.inboundModeNativeCallback'), value: 'direct-callback' },
+  { label: t('gewe.inboundModeRouterCallback'), value: 'relay-callback' },
+  { label: t('gewe.inboundModeRouterSse'), value: 'relay-sse' },
 ]
 
 const groupPolicyOptions = [
@@ -37,6 +55,16 @@ const groupPolicyOptions = [
   { label: t('gewe.groupPolicyAllowlist'), value: 'allowlist' },
   { label: t('gewe.groupPolicyOpen'), value: 'open' },
   { label: t('gewe.groupPolicyDisabled'), value: 'disabled' },
+]
+
+const profileRoutingModeOptions = [
+  { label: t('gewe.routingStandalone'), value: 'standalone' },
+  { label: t('gewe.routingShared'), value: 'shared' },
+]
+
+const bindingTypeOptions = [
+  { label: t('gewe.bindingTypeUser'), value: 'user' },
+  { label: t('gewe.bindingTypeGroup'), value: 'group' },
 ]
 
 function savingKey(scope: string, field: string) {
@@ -113,9 +141,10 @@ async function createManualBinding() {
   if (!manualUserId.value.trim()) return
   saving.manual = true
   try {
-    await geweApi.upsertGeweBinding(manualUserId.value, selectedProfile.value, manualUserName.value)
+    await geweApi.upsertGeweBinding(manualUserId.value, selectedProfile.value, manualUserName.value, manualBindingType.value, manualListenAll.value)
     manualUserId.value = ''
     manualUserName.value = ''
+    manualListenAll.value = false
     const data = await geweApi.fetchGeweBindings()
     bindings.value = data.bindings
     invites.value = data.invites
@@ -128,7 +157,7 @@ async function createManualBinding() {
 }
 
 async function removeBinding(row: GeweBinding) {
-  await geweApi.deleteGeweBinding(row.user_id)
+  await geweApi.deleteGeweBinding(row.identity || row.user_id, row.type || 'user')
   const data = await geweApi.fetchGeweBindings()
   bindings.value = data.bindings
   invites.value = data.invites
@@ -147,9 +176,23 @@ function copy(value: string) {
 }
 
 const bindingColumns: DataTableColumns<GeweBinding> = [
-  { title: t('gewe.wxid'), key: 'user_id' },
+  {
+    title: t('gewe.bindingType'),
+    key: 'type',
+    render(row) {
+      return h(NTag, { size: 'small', bordered: false }, { default: () => row.type === 'group' ? t('gewe.bindingTypeGroup') : t('gewe.bindingTypeUser') })
+    },
+  },
+  { title: t('gewe.identity'), key: 'identity' },
   { title: t('gewe.profile'), key: 'profile' },
-  { title: t('gewe.name'), key: 'user_name' },
+  { title: t('gewe.name'), key: 'name' },
+  {
+    title: t('gewe.listenAll'),
+    key: 'listen_all',
+    render(row) {
+      return row.type === 'group' && row.listen_all ? t('common.enable') : ''
+    },
+  },
   {
     title: t('common.delete'),
     key: 'actions',
@@ -223,38 +266,47 @@ onMounted(() => {
           <SettingRow :label="t('platform.geweApiBaseUrl')" :hint="t('platform.geweApiBaseUrlHint')">
             <NInput :default-value="common.api_base_url || ''" clearable size="small" class="input-lg" placeholder="https://api.geweapi.com" @change="v => saveCommon('api_base_url', { api_base_url: v })" />
           </SettingRow>
-          <SettingRow :label="t('gewe.callbackUrl')" :hint="t('gewe.callbackUrlHint')">
+          <SettingRow :label="t('platform.geweInboundMode')" :hint="t('gewe.inboundHint')">
+            <NSelect :value="inboundMode" :options="inboundModeOptions" size="small" class="input-lg" @update:value="v => saveCommon('inbound_mode', { inbound_mode: v })" />
+          </SettingRow>
+          <SettingRow :label="t('gewe.routingMode')" :hint="t('gewe.routingModeHint')">
+            <NSelect :value="common.profile_routing_mode || 'standalone'" :options="profileRoutingModeOptions" size="small" class="input-lg" @update:value="v => saveCommon('profile_routing_mode', { profile_routing_mode: v })" />
+          </SettingRow>
+          <SettingRow v-if="usesCallbackIngress" :label="t('gewe.callbackUrl')" :hint="t('gewe.callbackUrlHint')">
             <NSpace align="center" :wrap="false" class="input-lg">
               <NInput :value="callbackUrl" readonly size="small" />
               <NButton size="small" @click="copy(callbackUrl)">{{ t('common.copy') }}</NButton>
             </NSpace>
           </SettingRow>
-          <SettingRow :label="t('platform.geweCallbackSecret')" :hint="t('platform.geweCallbackSecretHint')">
-            <NInput :default-value="common.callback_secret || ''" clearable size="small" class="input-lg" @change="v => saveCommon('callback_secret', { callback_secret: v })" />
-          </SettingRow>
-          <SettingRow :label="t('platform.geweInboundMode')" :hint="t('gewe.inboundHint')">
-            <NSelect :value="common.inbound_mode || 'web-ui-callback'" :options="inboundModeOptions" size="small" class="input-lg" @update:value="v => saveCommon('inbound_mode', { inbound_mode: v })" />
-          </SettingRow>
-          <SettingRow :label="t('platform.geweRelayBaseUrl')" :hint="t('platform.geweRelayBaseUrlHint')">
-            <NInput :default-value="common.relay_base_url || ''" clearable size="small" class="input-lg" @change="v => saveCommon('relay_base_url', { relay_base_url: v })" />
-          </SettingRow>
-          <SettingRow :label="t('platform.geweRelayApp')" :hint="t('platform.geweRelayAppHint')">
-            <div class="split-inputs input-lg">
-              <NInput :default-value="common.relay_app_id || ''" clearable size="small" placeholder="app id" @change="v => saveCommon('relay_app_id', { relay_app_id: v })" />
-              <NInput :default-value="common.relay_app_token || ''" clearable size="small" placeholder="app token" @change="v => saveCommon('relay_app_token', { relay_app_token: v })" />
-              <NInput :default-value="common.relay_channel || ''" clearable size="small" placeholder="channel" @change="v => saveCommon('relay_channel', { relay_channel: v })" />
+          <SettingRow v-if="usesCallbackIngress" :label="t('platform.geweCallbackUrl')" :hint="t('platform.geweCallbackUrlHint')">
+            <div class="split-inputs input-lg three-cols">
+              <NInput :default-value="common.callback_host || '0.0.0.0'" clearable size="small" placeholder="0.0.0.0" @change="v => saveCommon('callback_host', { callback_host: v })" />
+              <NInput :default-value="String(common.callback_port || '8656')" clearable size="small" placeholder="8656" @change="v => saveCommon('callback_port', { callback_port: v })" />
+              <NInput :default-value="callbackPath" clearable size="small" placeholder="/gewe/callback" @change="v => saveCommon('callback_path', { callback_path: v })" />
             </div>
           </SettingRow>
-          <SettingRow :label="t('platform.geweRelaySseUrl')" :hint="t('platform.geweRelaySseUrlHint')">
-            <NInput :default-value="common.relay_sse_url || ''" clearable size="small" class="input-lg" @change="v => saveCommon('relay_sse_url', { relay_sse_url: v })" />
+          <SettingRow v-if="usesCallbackIngress" :label="t('platform.geweCallbackSecret')" :hint="t('platform.geweCallbackSecretHint')">
+            <NInput :default-value="common.callback_secret || ''" clearable size="small" class="input-lg" @change="v => saveCommon('callback_secret', { callback_secret: v })" />
+          </SettingRow>
+          <SettingRow v-if="usesRelayIngress" :label="t('platform.geweRelayBaseUrl')" :hint="t('platform.geweRelayBaseUrlHint')">
+            <NInput :default-value="common.relay_base_url || ''" clearable size="small" class="input-lg" @change="v => saveCommon('relay_base_url', { relay_base_url: v })" />
+          </SettingRow>
+          <SettingRow v-if="usesRelaySse" :label="t('platform.geweRelayApp')" :hint="t('gewe.relaySseAppHint')">
+            <div class="split-inputs input-lg two-cols">
+              <NInput :default-value="common.relay_app_id || ''" clearable size="small" placeholder="app id" @change="v => saveCommon('relay_app_id', { relay_app_id: v })" />
+              <NInput :default-value="common.relay_app_token || ''" clearable size="small" placeholder="app token" @change="v => saveCommon('relay_app_token', { relay_app_token: v })" />
+            </div>
+          </SettingRow>
+          <SettingRow v-if="usesRelayCallback" :label="t('gewe.relayChannel')" :hint="t('gewe.relayChannelHint')">
+            <NInput :default-value="common.relay_channel || ''" clearable size="small" class="input-lg" placeholder="channel" @change="v => saveCommon('relay_channel', { relay_channel: v })" />
           </SettingRow>
           <SettingRow :label="t('platform.geweGroupPolicy')" :hint="t('platform.geweGroupPolicyHint')">
             <NSelect :value="common.group_policy || 'paired'" :options="groupPolicyOptions" size="small" class="input-lg" @update:value="v => saveCommon('group_policy', { group_policy: v })" />
           </SettingRow>
-          <SettingRow :label="t('platform.geweGroupRequireMention')" :hint="t('platform.geweGroupRequireMentionHint')">
+          <SettingRow v-if="groupEnabled" :label="t('platform.geweGroupRequireMention')" :hint="t('platform.geweGroupRequireMentionHint')">
             <NSwitch :value="!!common.group_require_mention" @update:value="v => saveCommon('group_require_mention', { group_require_mention: v })" />
           </SettingRow>
-          <SettingRow :label="t('platform.geweGroupAllowedChats')" :hint="t('platform.geweGroupAllowedChatsHint')">
+          <SettingRow v-if="groupEnabled && showGroupAllowedChats" :label="t('platform.geweGroupAllowedChats')" :hint="t('platform.geweGroupAllowedChatsHint')">
             <NInput :default-value="common.group_allowed_chats || ''" clearable size="small" class="input-lg" placeholder="123@chatroom,456@chatroom" @change="v => saveCommon('group_allowed_chats', { group_allowed_chats: v })" />
           </SettingRow>
         </section>
@@ -285,8 +337,13 @@ onMounted(() => {
           </div>
 
           <div class="inline-form">
+            <NSelect v-model:value="manualBindingType" size="small" :options="bindingTypeOptions" class="binding-type-select" />
             <NInput v-model:value="manualUserId" size="small" :placeholder="t('gewe.wxidPlaceholder')" />
             <NInput v-model:value="manualUserName" size="small" :placeholder="t('gewe.namePlaceholder')" />
+            <NSwitch v-if="manualBindingType === 'group'" v-model:value="manualListenAll" size="small">
+              <template #checked>{{ t('gewe.listenAll') }}</template>
+              <template #unchecked>{{ t('gewe.listenAll') }}</template>
+            </NSwitch>
             <NButton size="small" type="primary" :loading="saving.manual" @click="createManualBinding">{{ t('gewe.bindToProfile') }}</NButton>
           </div>
           <NDataTable size="small" :columns="bindingColumns" :data="bindings" :bordered="false" />
@@ -371,9 +428,22 @@ onMounted(() => {
   gap: 8px;
 }
 
+.two-cols {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.three-cols {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .inline-form {
-  grid-template-columns: minmax(180px, 1fr) minmax(160px, 1fr) auto;
+  grid-template-columns: 120px minmax(180px, 1fr) minmax(160px, 1fr) auto auto;
+  align-items: center;
   margin: 12px 0;
+}
+
+.binding-type-select {
+  width: 120px;
 }
 
 @media (max-width: 720px) {

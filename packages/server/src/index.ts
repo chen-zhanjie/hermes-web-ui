@@ -115,6 +115,10 @@ export async function bootstrap() {
   const distDir = resolve(__dirname, '..', 'client')
   app.use(serve(distDir))
   app.use(async (ctx) => {
+    if (ctx.method !== 'GET' && ctx.method !== 'HEAD') {
+      ctx.status = 404
+      return
+    }
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&

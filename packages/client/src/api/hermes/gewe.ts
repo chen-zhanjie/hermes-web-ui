@@ -1,9 +1,13 @@
 import { request } from '../client'
 
 export interface GeweBinding {
+  type: 'user' | 'group'
+  identity: string
   user_id: string
   profile: string
+  name?: string
   user_name?: string
+  listen_all?: boolean
   bound_at: number
   updated_at?: number
   source?: 'manual' | 'invite'
@@ -58,14 +62,14 @@ export async function deleteGeweInvite(code: string): Promise<void> {
   await request(`/api/hermes/gewe-router/invites/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
-export async function upsertGeweBinding(user_id: string, profile: string, user_name = ''): Promise<GeweBinding> {
+export async function upsertGeweBinding(identity: string, profile: string, name = '', type: 'user' | 'group' = 'user', listen_all = false): Promise<GeweBinding> {
   const res = await request<{ ok: boolean; binding: GeweBinding }>('/api/hermes/gewe-router/bindings', {
     method: 'POST',
-    body: JSON.stringify({ user_id, profile, user_name }),
+    body: JSON.stringify({ identity, profile, name, type, listen_all }),
   })
   return res.binding
 }
 
-export async function deleteGeweBinding(userId: string): Promise<void> {
-  await request(`/api/hermes/gewe-router/bindings/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+export async function deleteGeweBinding(identity: string, type: 'user' | 'group' = 'user'): Promise<void> {
+  await request(`/api/hermes/gewe-router/bindings/${encodeURIComponent(identity)}?type=${encodeURIComponent(type)}`, { method: 'DELETE' })
 }

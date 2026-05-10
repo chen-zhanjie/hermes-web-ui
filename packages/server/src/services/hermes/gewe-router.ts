@@ -4,11 +4,9 @@ import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { dirname, join, resolve } from 'path'
 import YAML from 'js-yaml'
-import { getProfileDir } from './hermes-profile'
-import { logger } from '../logger'
 
 const HERMES_BASE = process.env.HERMES_HOME || resolve(homedir(), '.hermes')
-const ROUTER_DIR = join(HERMES_BASE, 'platforms', 'gewe-router')
+const ROUTER_DIR = join(HERMES_BASE, 'platforms', 'gewe')
 const STORE_PATH = join(ROUTER_DIR, 'bindings.json')
 const DEFAULT_API_BASE_URL = 'https://api.geweapi.com'
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -16,9 +14,13 @@ const DEFAULT_INVITE_TTL_SECONDS = 3600
 const PROCESSED_TTL_SECONDS = 600
 
 export interface GeweBinding {
+  type: 'user' | 'group'
+  identity: string
   user_id: string
   profile: string
+  name?: string
   user_name?: string
+  listen_all?: boolean
   bound_at: number
   updated_at?: number
   source?: 'manual' | 'invite'
@@ -38,18 +40,6 @@ interface GeweRouterStore {
   processed: Record<string, number>
 }
 
-interface GeweOptions {
-  enabled: boolean
-  token: string
-  appId: string
-  apiBaseUrl: string
-  callbackSecret: string
-  botWxids: Set<string>
-  groupPolicy: string
-  groupAllowedChats: Set<string>
-  groupRequireMention: boolean
-}
-
 export interface GewePageConfig {
   common: Record<string, any>
   profile: Record<string, any>
@@ -60,6 +50,9 @@ const COMMON_ENV_MAP: Record<string, string> = {
   token: 'GEWE_TOKEN',
   app_id: 'GEWE_APP_ID',
   api_base_url: 'GEWE_API_BASE_URL',
+  callback_host: 'GEWE_CALLBACK_HOST',
+  callback_port: 'GEWE_CALLBACK_PORT',
+  callback_path: 'GEWE_CALLBACK_PATH',
   callback_secret: 'GEWE_CALLBACK_SECRET',
   bot_wxid: 'GEWE_BOT_WXID',
   inbound_mode: 'GEWE_INBOUND_MODE',
@@ -71,34 +64,13 @@ const COMMON_ENV_MAP: Record<string, string> = {
   group_policy: 'GEWE_GROUP_POLICY',
   group_allowed_chats: 'GEWE_GROUP_ALLOWED_CHATS',
   group_require_mention: 'GEWE_GROUP_REQUIRE_MENTION',
+  profile_routing_mode: 'GEWE_PROFILE_ROUTING_MODE',
+  profile_router_store: 'GEWE_PROFILE_ROUTER_STORE',
 }
 
 const PROFILE_ENV_MAP: Record<string, string> = {
   home_channel: 'GEWE_HOME_CHANNEL',
   home_channel_name: 'GEWE_HOME_CHANNEL_NAME',
-}
-
-interface NormalizedGeweInbound {
-  accountId: string
-  fromUser: string
-  fromGroup: string
-  toUser: string
-  peerId: string
-  senderId: string
-  conversationType: 'dm' | 'group'
-  messageType: string
-  messageId: string
-  text: string
-  mentionedUserIds: Set<string>
-  raw: Record<string, any>
-}
-
-export interface GeweCallbackResult {
-  ok: boolean
-  status: 'ignored' | 'bound' | 'routed' | 'error'
-  message?: string
-  profile?: string
-  user_id?: string
 }
 
 function nowSeconds(): number {
@@ -115,12 +87,6 @@ function parseBool(value: any, fallback = false): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'string') return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase())
   return Boolean(value)
-}
-
-function splitCsv(value: any): string[] {
-  if (Array.isArray(value)) return value.map(String).map(v => v.trim()).filter(Boolean)
-  if (typeof value !== 'string') return []
-  return value.split(/[;,\s]+/).map(v => v.trim()).filter(Boolean)
 }
 
 function parseEnv(raw: string): Record<string, string> {
@@ -154,6 +120,9 @@ async function readProfileGeweConfig(profileDir: string): Promise<Record<string,
     if (env.GEWE_TOKEN) result.token = env.GEWE_TOKEN
     if (env.GEWE_APP_ID) result.extra.app_id = env.GEWE_APP_ID
     if (env.GEWE_API_BASE_URL) result.extra.api_base_url = env.GEWE_API_BASE_URL
+    if (env.GEWE_CALLBACK_HOST) result.extra.callback_host = env.GEWE_CALLBACK_HOST
+    if (env.GEWE_CALLBACK_PORT) result.extra.callback_port = env.GEWE_CALLBACK_PORT
+    if (env.GEWE_CALLBACK_PATH) result.extra.callback_path = env.GEWE_CALLBACK_PATH
     if (env.GEWE_CALLBACK_SECRET) result.extra.callback_secret = env.GEWE_CALLBACK_SECRET
     if (env.GEWE_BOT_WXID) result.extra.bot_wxid = env.GEWE_BOT_WXID
     if (env.GEWE_INBOUND_MODE) result.extra.inbound_mode = env.GEWE_INBOUND_MODE
@@ -165,27 +134,12 @@ async function readProfileGeweConfig(profileDir: string): Promise<Record<string,
     if (env.GEWE_GROUP_POLICY) result.extra.group_policy = env.GEWE_GROUP_POLICY
     if (env.GEWE_GROUP_ALLOWED_CHATS) result.extra.group_allowed_chats = env.GEWE_GROUP_ALLOWED_CHATS
     if (env.GEWE_GROUP_REQUIRE_MENTION) result.extra.group_require_mention = env.GEWE_GROUP_REQUIRE_MENTION
+    if (env.GEWE_PROFILE_ROUTING_MODE) result.extra.profile_routing_mode = env.GEWE_PROFILE_ROUTING_MODE
+    if (env.GEWE_PROFILE_ROUTER_STORE) result.extra.profile_router_store = env.GEWE_PROFILE_ROUTER_STORE
     if (env.GEWE_HOME_CHANNEL) result.extra.home_channel = env.GEWE_HOME_CHANNEL
     if (env.GEWE_HOME_CHANNEL_NAME) result.extra.home_channel_name = env.GEWE_HOME_CHANNEL_NAME
   } catch { }
   return result
-}
-
-async function loadOptions(): Promise<GeweOptions> {
-  const defaultCfg = await readProfileGeweConfig(getProfileDir('default'))
-  const merged: Record<string, any> = defaultCfg
-  const extra = merged.extra || {}
-  return {
-    enabled: parseBool(process.env.GEWE_ENABLED || merged.enabled, false),
-    token: String(process.env.GEWE_TOKEN || merged.token || extra.token || ''),
-    appId: String(process.env.GEWE_APP_ID || extra.app_id || ''),
-    apiBaseUrl: String(process.env.GEWE_API_BASE_URL || extra.api_base_url || DEFAULT_API_BASE_URL).replace(/\/+$/, ''),
-    callbackSecret: String(process.env.GEWE_CALLBACK_SECRET || extra.callback_secret || ''),
-    botWxids: new Set(splitCsv(process.env.GEWE_BOT_WXID || extra.bot_wxid)),
-    groupPolicy: String(process.env.GEWE_GROUP_POLICY || extra.group_policy || 'paired').trim().toLowerCase(),
-    groupAllowedChats: new Set(splitCsv(process.env.GEWE_GROUP_ALLOWED_CHATS || extra.group_allowed_chats)),
-    groupRequireMention: parseBool(process.env.GEWE_GROUP_REQUIRE_MENTION || extra.group_require_mention, false),
-  }
 }
 
 function flattenCommonConfig(cfg: Record<string, any>): Record<string, any> {
@@ -195,9 +149,12 @@ function flattenCommonConfig(cfg: Record<string, any>): Record<string, any> {
     token: String(cfg.token || ''),
     app_id: String(extra.app_id || ''),
     api_base_url: String(extra.api_base_url || DEFAULT_API_BASE_URL),
+    callback_host: String(extra.callback_host || '0.0.0.0'),
+    callback_port: String(extra.callback_port || '8656'),
+    callback_path: String(extra.callback_path || ''),
     callback_secret: String(extra.callback_secret || ''),
     bot_wxid: String(extra.bot_wxid || ''),
-    inbound_mode: String(extra.inbound_mode || 'web-ui-callback'),
+    inbound_mode: String(extra.inbound_mode || 'direct-callback'),
     relay_base_url: String(extra.relay_base_url || 'https://hook.yunzxu.com'),
     relay_app_id: String(extra.relay_app_id || ''),
     relay_app_token: String(extra.relay_app_token || ''),
@@ -206,6 +163,8 @@ function flattenCommonConfig(cfg: Record<string, any>): Record<string, any> {
     group_policy: String(extra.group_policy || 'paired'),
     group_allowed_chats: String(extra.group_allowed_chats || ''),
     group_require_mention: parseBool(extra.group_require_mention, false),
+    profile_routing_mode: String(extra.profile_routing_mode || 'standalone'),
+    profile_router_store: String(extra.profile_router_store || ''),
   }
 }
 
@@ -318,37 +277,65 @@ export async function listGeweBindings(): Promise<{ bindings: GeweBinding[]; inv
   cleanupStore(store)
   await saveStore(store)
   return {
-    bindings: Object.values(store.bindings).sort((a, b) => a.user_id.localeCompare(b.user_id)),
+    bindings: Object.values(store.bindings).map(normalizeBinding).sort((a, b) => `${a.type}:${a.identity}`.localeCompare(`${b.type}:${b.identity}`)),
     invites: Object.values(store.invites).sort((a, b) => b.created_at - a.created_at),
   }
 }
 
-export async function upsertGeweBinding(userId: string, profile: string, userName = ''): Promise<GeweBinding> {
-  const uid = userId.trim()
+function bindingKey(type: 'user' | 'group', identity: string): string {
+  return `${type}:${identity}`
+}
+
+function normalizeBinding(binding: GeweBinding): GeweBinding {
+  const type = binding.type || 'user'
+  const identity = binding.identity || binding.user_id
+  const name = binding.name || binding.user_name || ''
+  return {
+    ...binding,
+    type,
+    identity,
+    user_id: identity,
+    name,
+    user_name: name,
+    listen_all: type === 'group' ? !!binding.listen_all : false,
+  }
+}
+
+export async function upsertGeweBinding(identity: string, profile: string, name = '', type: 'user' | 'group' = 'user', listenAll = false): Promise<GeweBinding> {
+  const targetType = type === 'group' ? 'group' : 'user'
+  const uid = identity.trim()
   const targetProfile = profile.trim()
   if (!uid) throw new Error('user_id is required')
   if (!targetProfile) throw new Error('profile is required')
   if (!profileExists(targetProfile)) throw new Error(`profile not found: ${targetProfile}`)
   const store = await loadStore()
-  const existing = store.bindings[uid]
+  const key = bindingKey(targetType, uid)
+  const existing = store.bindings[key] || store.bindings[uid]
   const binding: GeweBinding = {
+    type: targetType,
+    identity: uid,
     user_id: uid,
     profile: targetProfile,
-    user_name: userName.trim() || existing?.user_name || '',
+    name: name.trim() || existing?.name || existing?.user_name || '',
+    user_name: name.trim() || existing?.user_name || existing?.name || '',
+    listen_all: targetType === 'group' ? !!listenAll : false,
     bound_at: existing?.bound_at || nowSeconds(),
     updated_at: nowSeconds(),
     source: existing?.source || 'manual',
   }
-  store.bindings[uid] = binding
+  delete store.bindings[uid]
+  store.bindings[key] = binding
   cleanupStore(store)
   await saveStore(store)
   return binding
 }
 
-export async function removeGeweBinding(userId: string): Promise<boolean> {
+export async function removeGeweBinding(identity: string, type: 'user' | 'group' = 'user'): Promise<boolean> {
   const store = await loadStore()
-  const existed = Boolean(store.bindings[userId])
-  delete store.bindings[userId]
+  const key = bindingKey(type === 'group' ? 'group' : 'user', identity)
+  const existed = Boolean(store.bindings[key] || store.bindings[identity])
+  delete store.bindings[key]
+  delete store.bindings[identity]
   cleanupStore(store)
   await saveStore(store)
   return existed
@@ -383,244 +370,4 @@ export async function removeGeweInvite(code: string): Promise<boolean> {
   cleanupStore(store)
   await saveStore(store)
   return existed
-}
-
-function unwrapRelayPayload(payload: any): Record<string, any> | null {
-  if (!payload || typeof payload !== 'object') return null
-  if (payload.body && typeof payload.body === 'object') return payload.body
-  if (payload.data && typeof payload.data === 'object' && payload.data.body && typeof payload.data.body === 'object') return payload.data.body
-  return payload
-}
-
-function htmlUnescape(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-}
-
-function tagText(xml: string, tag: string): string {
-  const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'))
-  return htmlUnescape(match?.[1] || '').trim()
-}
-
-function extractMentionedUserIds(payload: Record<string, any>): Set<string> {
-  const values = new Set<string>()
-  for (const key of ['atUserList', 'atuserlist', 'atUsers', 'atWxidList', 'atWxids', 'atUserName', 'mentionedUsers', 'mentionUsers', 'mentionWxids']) {
-    for (const item of splitCsv(payload[key])) values.add(item)
-  }
-  const source = String(payload.msgSource || payload.msgsource || '')
-  if (source) {
-    for (const item of splitCsv(tagText(htmlUnescape(source), 'atuserlist'))) values.add(item)
-  }
-  return values
-}
-
-function messageText(payload: Record<string, any>, messageType: string): string {
-  const content = String(payload.content || payload.text || '')
-  if (messageType === 'text') return content.trim()
-  if (messageType === 'quote') {
-    const title = tagText(content, 'title')
-    const quoted = tagText(content, 'content')
-    return [`[引用消息] ${title || ''}`.trim(), quoted ? `> ${quoted}` : ''].filter(Boolean).join('\n')
-  }
-  const labels: Record<string, string> = {
-    image: '[图片]',
-    voice: '[语音]',
-    video: '[视频]',
-    file: '[文件]',
-    link: '[链接]',
-    emoji: '[表情]',
-    mini_program: '[小程序]',
-    chat_record: '[聊天记录]',
-  }
-  return labels[messageType] || `[${messageType || '消息'}]`
-}
-
-function mapMessageType(value: any): string {
-  const raw = String(value || '').toUpperCase()
-  return ({
-    TEXT: 'text',
-    IMAGE: 'image',
-    VOICE: 'voice',
-    VIDEO: 'video',
-    FILE: 'file',
-    LINK: 'link',
-    QUOTE: 'quote',
-    MINI_PROGRAM: 'mini_program',
-    CHAT_RECORD: 'chat_record',
-    EMOJI: 'emoji',
-  } as Record<string, string>)[raw] || raw.toLowerCase() || 'unknown'
-}
-
-function normalizeInbound(payload: Record<string, any>): NormalizedGeweInbound | null {
-  const fromUser = String(payload.fromUser || '')
-  const toUser = String(payload.toUser || '')
-  const fromGroup = String(payload.fromGroup || payload.roomWxid || payload.groupId || '')
-  if (!fromUser && !toUser) return null
-  const eventCode = String(payload.eventCode || '').toLowerCase()
-  const conversationType: 'dm' | 'group' = fromGroup || eventCode === 'group_msg_event' ? 'group' : 'dm'
-  const messageType = mapMessageType(payload.msgType)
-  return {
-    accountId: String(payload.wxid || toUser || ''),
-    fromUser,
-    fromGroup,
-    toUser,
-    peerId: conversationType === 'group' ? fromGroup : fromUser,
-    senderId: fromUser,
-    conversationType,
-    messageType,
-    messageId: String(payload.newMsgId || payload.msgId || payload.id || ''),
-    text: messageText(payload, messageType),
-    mentionedUserIds: extractMentionedUserIds(payload),
-    raw: payload,
-  }
-}
-
-function shouldProcessGroup(msg: NormalizedGeweInbound, options: GeweOptions): boolean {
-  if (options.groupPolicy === 'disabled' || options.groupPolicy === 'off' || options.groupPolicy === 'none') return false
-  if (options.groupAllowedChats.size > 0 && !options.groupAllowedChats.has('*') && !options.groupAllowedChats.has(msg.fromGroup)) return false
-  if (options.groupPolicy === 'allowlist' && options.groupAllowedChats.size === 0) return false
-  if (options.groupRequireMention) {
-    for (const botWxid of options.botWxids) {
-      if (msg.mentionedUserIds.has(botWxid)) return true
-    }
-    return false
-  }
-  return true
-}
-
-function extractOutputText(value: any): string {
-  const parts: string[] = []
-  const visit = (node: any) => {
-    if (!node) return
-    if (Array.isArray(node)) { node.forEach(visit); return }
-    if (typeof node !== 'object') return
-    if (typeof node.text === 'string' && ['output_text', 'text'].includes(String(node.type || ''))) parts.push(node.text)
-    if (typeof node.output_text === 'string') parts.push(node.output_text)
-    if (node.content) visit(node.content)
-    if (node.output) visit(node.output)
-  }
-  visit(value?.output || value)
-  return parts.join('').trim()
-}
-
-async function sendGeweText(options: GeweOptions, toWxid: string, content: string): Promise<void> {
-  const res = await fetch(`${options.apiBaseUrl}/gewe/v2/api/message/postText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-GEWE-TOKEN': options.token },
-    body: JSON.stringify({ appId: options.appId, toWxid, content }),
-    signal: AbortSignal.timeout(30000),
-  })
-  if (!res.ok) throw new Error(`GeWe send failed: ${res.status} ${await res.text()}`)
-}
-
-async function callProfileGateway(manager: any, profile: string, msg: NormalizedGeweInbound): Promise<string> {
-  const upstream = manager.getUpstream(profile).replace(/\/$/, '')
-  const apiKey = manager.getApiKey(profile)
-  const sessionKey = msg.conversationType === 'group'
-    ? `gewe:group:${msg.fromGroup}:${msg.senderId}`
-    : `gewe:dm:${msg.senderId}`
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'X-Hermes-Session-Key': sessionKey,
-  }
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-  const res = await fetch(`${upstream}/v1/responses`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      input: msg.text,
-      conversation: sessionKey,
-      store: true,
-    }),
-    signal: AbortSignal.timeout(300000),
-  })
-  const bodyText = await res.text()
-  if (!res.ok) throw new Error(`Profile gateway ${profile} failed: ${res.status} ${bodyText}`)
-  const data = bodyText ? JSON.parse(bodyText) : {}
-  return extractOutputText(data)
-}
-
-async function claimInviteIfPresent(store: GeweRouterStore, msg: NormalizedGeweInbound): Promise<GeweBinding | null> {
-  if (msg.conversationType !== 'dm') return null
-  const match = msg.text.trim().match(/^\/(?:pair|bind)\s+([A-Za-z0-9]+)$/i)
-  if (!match) return null
-  const code = match[1].toUpperCase()
-  const invite = store.invites[code]
-  if (!invite || invite.expires_at <= nowSeconds()) return null
-  delete store.invites[code]
-  const binding: GeweBinding = {
-    user_id: msg.senderId,
-    profile: invite.profile,
-    user_name: invite.label || msg.senderId,
-    bound_at: nowSeconds(),
-    updated_at: nowSeconds(),
-    source: 'invite',
-  }
-  store.bindings[msg.senderId] = binding
-  return binding
-}
-
-function checkCallbackSecret(headers: Record<string, any>, options: GeweOptions): boolean {
-  if (!options.callbackSecret || options.callbackSecret === 'INSECURE_NO_AUTH') return true
-  const supplied = headers['x-hermes-gewe-secret'] || headers['x-gewe-secret'] || headers['X-Hermes-Gewe-Secret'] || headers['X-Gewe-Secret']
-  return String(supplied || '') === options.callbackSecret
-}
-
-export async function handleGeweCallback(payload: any, headers: Record<string, any>, manager: any): Promise<GeweCallbackResult> {
-  const options = await loadOptions()
-  if (!checkCallbackSecret(headers, options)) {
-    return { ok: false, status: 'error', message: 'invalid callback secret' }
-  }
-  if (!options.enabled) {
-    return { ok: true, status: 'ignored', message: 'GeWe shared ingress is disabled' }
-  }
-  if (!options.token || !options.appId || options.botWxids.size === 0) {
-    return { ok: false, status: 'error', message: 'GEWE_TOKEN, GEWE_APP_ID and GEWE_BOT_WXID are required' }
-  }
-  const body = unwrapRelayPayload(payload)
-  if (!body) return { ok: false, status: 'error', message: 'invalid payload' }
-  if (parseBool(body.isSelf, false)) return { ok: true, status: 'ignored', message: 'self message' }
-  const msg = normalizeInbound(body)
-  if (!msg || !msg.senderId || !msg.peerId) return { ok: true, status: 'ignored', message: 'unsupported message' }
-
-  const store = await loadStore()
-  cleanupStore(store)
-  const processedKey = msg.messageId ? `${msg.accountId}:${msg.messageId}` : ''
-  if (processedKey && store.processed[processedKey]) {
-    await saveStore(store)
-    return { ok: true, status: 'ignored', message: 'duplicate message' }
-  }
-  if (processedKey) store.processed[processedKey] = nowSeconds()
-
-  const claimed = await claimInviteIfPresent(store, msg)
-  if (claimed) {
-    await saveStore(store)
-    await sendGeweText(options, msg.senderId, `绑定成功，后续消息将由 profile「${claimed.profile}」处理。`)
-    return { ok: true, status: 'bound', profile: claimed.profile, user_id: msg.senderId }
-  }
-
-  if (msg.conversationType === 'group' && !shouldProcessGroup(msg, options)) {
-    await saveStore(store)
-    return { ok: true, status: 'ignored', message: 'group policy skipped' }
-  }
-
-  const binding = store.bindings[msg.senderId]
-  if (!binding) {
-    await saveStore(store)
-    return { ok: true, status: 'ignored', message: 'sender is not bound', user_id: msg.senderId }
-  }
-  if (!profileExists(binding.profile)) {
-    await saveStore(store)
-    return { ok: false, status: 'error', message: `bound profile not found: ${binding.profile}`, profile: binding.profile, user_id: msg.senderId }
-  }
-  await saveStore(store)
-
-  logger.info('[gewe-router] routing sender=%s chat=%s profile=%s', msg.senderId, msg.peerId, binding.profile)
-  const reply = await callProfileGateway(manager, binding.profile, msg)
-  if (reply) await sendGeweText(options, msg.peerId, reply)
-  return { ok: true, status: 'routed', profile: binding.profile, user_id: msg.senderId }
 }

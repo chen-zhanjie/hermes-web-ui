@@ -1,9 +1,7 @@
 import type { Context } from 'koa'
-import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import {
   createGeweInvite,
   getGewePageConfig,
-  handleGeweCallback,
   listGeweBindings,
   removeGeweBinding,
   removeGeweInvite,
@@ -11,18 +9,6 @@ import {
   saveGeweProfileConfig,
   upsertGeweBinding,
 } from '../../services/hermes/gewe-router'
-
-export async function callback(ctx: Context) {
-  const manager = getGatewayManagerInstance()
-  if (!manager) {
-    ctx.status = 503
-    ctx.body = { ok: false, error: 'GatewayManager not initialized' }
-    return
-  }
-  const result = await handleGeweCallback(ctx.request.body, ctx.headers, manager)
-  ctx.status = result.ok ? 200 : 400
-  ctx.body = result
-}
 
 export async function list(ctx: Context) {
   ctx.body = await listGeweBindings()
@@ -62,9 +48,15 @@ export async function updateProfileConfig(ctx: Context) {
 }
 
 export async function bind(ctx: Context) {
-  const body = ctx.request.body as { user_id?: string; profile?: string; user_name?: string }
+  const body = ctx.request.body as { user_id?: string; identity?: string; profile?: string; user_name?: string; name?: string; type?: 'user' | 'group'; listen_all?: boolean }
   try {
-    const binding = await upsertGeweBinding(body.user_id || '', body.profile || '', body.user_name || '')
+    const binding = await upsertGeweBinding(
+      body.identity || body.user_id || '',
+      body.profile || '',
+      body.name || body.user_name || '',
+      body.type || 'user',
+      !!body.listen_all,
+    )
     ctx.body = { ok: true, binding }
   } catch (err: any) {
     ctx.status = 400
@@ -74,7 +66,8 @@ export async function bind(ctx: Context) {
 
 export async function unbind(ctx: Context) {
   const userId = String(ctx.params.userId || '')
-  ctx.body = { ok: true, removed: await removeGeweBinding(userId) }
+  const type = String(ctx.query.type || 'user') === 'group' ? 'group' : 'user'
+  ctx.body = { ok: true, removed: await removeGeweBinding(userId, type) }
 }
 
 export async function invite(ctx: Context) {

@@ -3,7 +3,6 @@ import type { Context, Next } from 'koa'
 // Shared route modules
 import { healthRoutes } from './health'
 import { webhookRoutes } from './webhook'
-import { publicGeweRouterRoutes } from './gewe-router'
 import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
@@ -42,7 +41,6 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
-  app.use(publicGeweRouterRoutes.routes())
   app.use(authPublicRoutes.routes())
   app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
