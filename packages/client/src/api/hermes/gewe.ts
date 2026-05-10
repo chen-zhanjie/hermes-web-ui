@@ -10,20 +10,25 @@ export interface GeweBinding {
   listen_all?: boolean
   bound_at: number
   updated_at?: number
-  source?: 'manual' | 'invite'
+  source?: 'manual'
 }
 
-export interface GeweInvite {
-  code: string
-  profile: string
-  label?: string
-  created_at: number
-  expires_at: number
-}
 
 export interface GewePageConfig {
   common: Record<string, any>
   profile: Record<string, any>
+}
+
+export interface GewePairingUser {
+  identity: string
+  user_id: string
+  user_name?: string
+  status: 'pending' | 'approved' | 'bound'
+  code?: string
+  created_at?: number
+  approved_at?: number
+  profile?: string
+  bound_at?: number
 }
 
 export async function fetchGeweConfig(profile: string): Promise<GewePageConfig> {
@@ -46,21 +51,15 @@ export async function saveGeweProfile(profile: string, values: Record<string, an
   return res.profile
 }
 
-export async function fetchGeweBindings(): Promise<{ bindings: GeweBinding[]; invites: GeweInvite[] }> {
-  return request<{ bindings: GeweBinding[]; invites: GeweInvite[] }>('/api/hermes/gewe-router/bindings')
+export async function fetchGewePairingUsers(): Promise<GewePairingUser[]> {
+  const res = await request<{ users: GewePairingUser[] }>('/api/hermes/gewe-router/pairing-users')
+  return res.users || []
 }
 
-export async function createGeweInvite(profile: string, label = ''): Promise<GeweInvite> {
-  const res = await request<{ ok: boolean; invite: GeweInvite }>('/api/hermes/gewe-router/invites', {
-    method: 'POST',
-    body: JSON.stringify({ profile, label }),
-  })
-  return res.invite
+export async function fetchGeweBindings(): Promise<{ bindings: GeweBinding[] }> {
+  return request<{ bindings: GeweBinding[] }>('/api/hermes/gewe-router/bindings')
 }
 
-export async function deleteGeweInvite(code: string): Promise<void> {
-  await request(`/api/hermes/gewe-router/invites/${encodeURIComponent(code)}`, { method: 'DELETE' })
-}
 
 export async function upsertGeweBinding(identity: string, profile: string, name = '', type: 'user' | 'group' = 'user', listen_all = false): Promise<GeweBinding> {
   const res = await request<{ ok: boolean; binding: GeweBinding }>('/api/hermes/gewe-router/bindings', {

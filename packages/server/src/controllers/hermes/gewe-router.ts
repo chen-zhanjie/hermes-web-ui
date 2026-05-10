@@ -1,10 +1,9 @@
 import type { Context } from 'koa'
 import {
-  createGeweInvite,
   getGewePageConfig,
   listGeweBindings,
+  listGewePairingUsers,
   removeGeweBinding,
-  removeGeweInvite,
   saveGeweCommonConfig,
   saveGeweProfileConfig,
   upsertGeweBinding,
@@ -12,6 +11,10 @@ import {
 
 export async function list(ctx: Context) {
   ctx.body = await listGeweBindings()
+}
+
+export async function pairingUsers(ctx: Context) {
+  ctx.body = { users: await listGewePairingUsers() }
 }
 
 export async function config(ctx: Context) {
@@ -68,20 +71,4 @@ export async function unbind(ctx: Context) {
   const userId = String(ctx.params.userId || '')
   const type = String(ctx.query.type || 'user') === 'group' ? 'group' : 'user'
   ctx.body = { ok: true, removed: await removeGeweBinding(userId, type) }
-}
-
-export async function invite(ctx: Context) {
-  const body = ctx.request.body as { profile?: string; label?: string; ttl_seconds?: number }
-  try {
-    const invite = await createGeweInvite(body.profile || '', body.label || '', body.ttl_seconds)
-    ctx.body = { ok: true, invite }
-  } catch (err: any) {
-    ctx.status = 400
-    ctx.body = { ok: false, error: err?.message || 'failed to create invite' }
-  }
-}
-
-export async function deleteInvite(ctx: Context) {
-  const code = String(ctx.params.code || '')
-  ctx.body = { ok: true, removed: await removeGeweInvite(code) }
 }

@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import SettingRow from '@/components/hermes/settings/SettingRow.vue'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import * as geweApi from '@/api/hermes/gewe'
-import type { GeweBinding, GeweInvite } from '@/api/hermes/gewe'
+import type { GeweBinding, GewePairingUser } from '@/api/hermes/gewe'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -18,12 +18,12 @@ const selectedProfile = ref('default')
 const common = ref<Record<string, any>>({})
 const profileConfig = ref<Record<string, any>>({})
 const bindings = ref<GeweBinding[]>([])
-const invites = ref<GeweInvite[]>([])
+const pairingUsers = ref<GewePairingUser[]>([])
 const manualBindingType = ref<'user' | 'group'>('user')
 const manualUserId = ref('')
 const manualUserName = ref('')
 const manualListenAll = ref(false)
-const inviteLabel = ref('')
+const selectedPairingIdentity = ref<string | null>(null)
 
 const profileOptions = computed(() => profilesStore.profiles.map(p => ({ label: p.name, value: p.name })))
 const inboundMode = computed(() => String(common.value.inbound_mode || 'direct-callback'))
@@ -57,10 +57,12 @@ const groupPolicyOptions = [
   { label: t('gewe.groupPolicyDisabled'), value: 'disabled' },
 ]
 
-const profileRoutingModeOptions = [
-  { label: t('gewe.routingStandalone'), value: 'standalone' },
-  { label: t('gewe.routingShared'), value: 'shared' },
-]
+const pairingUserOptions = computed(() => pairingUsers.value.map(user => ({
+  label: `${user.user_name || user.identity} (${user.identity})`,
+  value: user.identity,
+})))
+
+const selectedPairingUser = computed(() => pairingUsers.value.find(user => user.identity === selectedPairingIdentity.value))
 
 const bindingTypeOptions = [
   { label: t('gewe.bindingTypeUser'), value: 'user' },
@@ -80,14 +82,16 @@ async function loadAll() {
   try {
     if (!profilesStore.profiles.length) await profilesStore.fetchProfiles()
     if (!selectedProfile.value) selectedProfile.value = profilesStore.activeProfileName || 'default'
-    const [config, bindingData] = await Promise.all([
+    const [config, bindingData, userData] = await Promise.all([
       geweApi.fetchGeweConfig(selectedProfile.value),
       geweApi.fetchGeweBindings(),
+      geweApi.fetchGewePairingUsers(),
     ])
     common.value = config.common || {}
     profileConfig.value = config.profile || {}
     bindings.value = bindingData.bindings || []
-    invites.value = bindingData.invites || []
+    pairingUsers.value = userData || []
+    if (!selectedPairingIdentity.value && pairingUsers.value.length) selectedPairingIdentity.value = pairingUsers.value[0].identity
   } catch (err: any) {
     message.error(err?.message || t('settings.saveFailed'))
   } finally {
@@ -121,22 +125,6 @@ async function saveProfile(field: string, values: Record<string, any>) {
   }
 }
 
-async function createInvite() {
-  saving.invite = true
-  try {
-    await geweApi.createGeweInvite(selectedProfile.value, inviteLabel.value)
-    inviteLabel.value = ''
-    const data = await geweApi.fetchGeweBindings()
-    bindings.value = data.bindings
-    invites.value = data.invites
-    message.success(t('gewe.inviteCreated'))
-  } catch (err: any) {
-    message.error(err?.message || t('settings.saveFailed'))
-  } finally {
-    saving.invite = false
-  }
-}
-
 async function createManualBinding() {
   if (!manualUserId.value.trim()) return
   saving.manual = true
@@ -145,9 +133,7 @@ async function createManualBinding() {
     manualUserId.value = ''
     manualUserName.value = ''
     manualListenAll.value = false
-    const data = await geweApi.fetchGeweBindings()
-    bindings.value = data.bindings
-    invites.value = data.invites
+    await reloadBindingData()
     message.success(t('settings.saved'))
   } catch (err: any) {
     message.error(err?.message || t('settings.saveFailed'))
@@ -156,18 +142,34 @@ async function createManualBinding() {
   }
 }
 
-async function removeBinding(row: GeweBinding) {
-  await geweApi.deleteGeweBinding(row.identity || row.user_id, row.type || 'user')
-  const data = await geweApi.fetchGeweBindings()
-  bindings.value = data.bindings
-  invites.value = data.invites
+async function reloadBindingData() {
+  const [bindingData, userData] = await Promise.all([
+    geweApi.fetchGeweBindings(),
+    geweApi.fetchGewePairingUsers(),
+  ])
+  bindings.value = bindingData.bindings || []
+  pairingUsers.value = userData || []
 }
 
-async function removeInvite(row: GeweInvite) {
-  await geweApi.deleteGeweInvite(row.code)
-  const data = await geweApi.fetchGeweBindings()
-  bindings.value = data.bindings
-  invites.value = data.invites
+async function bindSelectedPairingUser(row?: GewePairingUser) {
+  const target = row || selectedPairingUser.value
+  if (!target?.identity) return
+  saving.pairing = true
+  try {
+    await geweApi.upsertGeweBinding(target.identity, selectedProfile.value, target.user_name || '', 'user', false)
+    await reloadBindingData()
+    selectedPairingIdentity.value = target.identity
+    message.success(t('settings.saved'))
+  } catch (err: any) {
+    message.error(err?.message || t('settings.saveFailed'))
+  } finally {
+    saving.pairing = false
+  }
+}
+
+async function removeBinding(row: GeweBinding) {
+  await geweApi.deleteGeweBinding(row.identity || row.user_id, row.type || 'user')
+  await reloadBindingData()
 }
 
 function copy(value: string) {
@@ -202,26 +204,24 @@ const bindingColumns: DataTableColumns<GeweBinding> = [
   },
 ]
 
-const inviteColumns: DataTableColumns<GeweInvite> = [
+const pairingUserColumns: DataTableColumns<GewePairingUser> = [
+  { title: t('gewe.identity'), key: 'identity' },
+  { title: t('gewe.name'), key: 'user_name' },
   {
-    title: t('gewe.inviteCode'),
-    key: 'code',
+    title: t('gewe.pairingStatus'),
+    key: 'status',
     render(row) {
-      return h(NSpace, { align: 'center', size: 6 }, {
-        default: () => [
-          h(NTag, { size: 'small', bordered: false }, { default: () => row.code }),
-          h(NButton, { size: 'tiny', quaternary: true, onClick: () => copy(`/pair ${row.code}`) }, { default: () => t('common.copy') }),
-        ],
-      })
+      const label = row.status === 'bound' ? t('gewe.pairingStatusBound') : row.status === 'approved' ? t('gewe.pairingStatusApproved') : t('gewe.pairingStatusPending')
+      const type = row.status === 'bound' ? 'success' : row.status === 'approved' ? 'info' : 'warning'
+      return h(NTag, { size: 'small', bordered: false, type }, { default: () => label })
     },
   },
   { title: t('gewe.profile'), key: 'profile' },
-  { title: t('gewe.name'), key: 'label' },
   {
-    title: t('common.delete'),
+    title: t('gewe.bindToProfile'),
     key: 'actions',
     render(row) {
-      return h(NButton, { size: 'tiny', quaternary: true, type: 'error', onClick: () => removeInvite(row) }, { default: () => t('common.delete') })
+      return h(NButton, { size: 'tiny', quaternary: true, type: 'primary', loading: !!saving.pairing && selectedPairingIdentity.value === row.identity, onClick: () => bindSelectedPairingUser(row) }, { default: () => t('gewe.bindToProfile') })
     },
   },
 ]
@@ -268,9 +268,6 @@ onMounted(() => {
           </SettingRow>
           <SettingRow :label="t('platform.geweInboundMode')" :hint="t('gewe.inboundHint')">
             <NSelect :value="inboundMode" :options="inboundModeOptions" size="small" class="input-lg" @update:value="v => saveCommon('inbound_mode', { inbound_mode: v })" />
-          </SettingRow>
-          <SettingRow :label="t('gewe.routingMode')" :hint="t('gewe.routingModeHint')">
-            <NSelect :value="common.profile_routing_mode || 'standalone'" :options="profileRoutingModeOptions" size="small" class="input-lg" @update:value="v => saveCommon('profile_routing_mode', { profile_routing_mode: v })" />
           </SettingRow>
           <SettingRow v-if="usesCallbackIngress" :label="t('gewe.callbackUrl')" :hint="t('gewe.callbackUrlHint')">
             <NSpace align="center" :wrap="false" class="input-lg">
@@ -331,6 +328,21 @@ onMounted(() => {
         <section class="settings-block">
           <div class="block-header">
             <div>
+              <h3>{{ t('gewe.discoveredUsers') }}</h3>
+              <p>{{ t('gewe.discoveredUsersHint') }}</p>
+            </div>
+          </div>
+
+          <div class="pairing-form">
+            <NSelect v-model:value="selectedPairingIdentity" size="small" :options="pairingUserOptions" :placeholder="t('gewe.noPairingUser')" filterable clearable />
+            <NButton size="small" type="primary" :disabled="!selectedPairingIdentity" :loading="saving.pairing" @click="() => bindSelectedPairingUser()">{{ t('gewe.bindSelectedUser') }}</NButton>
+          </div>
+          <NDataTable size="small" :columns="pairingUserColumns" :data="pairingUsers" :bordered="false" />
+        </section>
+
+        <section class="settings-block">
+          <div class="block-header">
+            <div>
               <h3>{{ t('gewe.bindings') }}</h3>
               <p>{{ t('gewe.bindingsHint') }}</p>
             </div>
@@ -347,20 +359,6 @@ onMounted(() => {
             <NButton size="small" type="primary" :loading="saving.manual" @click="createManualBinding">{{ t('gewe.bindToProfile') }}</NButton>
           </div>
           <NDataTable size="small" :columns="bindingColumns" :data="bindings" :bordered="false" />
-        </section>
-
-        <section class="settings-block">
-          <div class="block-header">
-            <div>
-              <h3>{{ t('gewe.invites') }}</h3>
-              <p>{{ t('gewe.invitesHint') }}</p>
-            </div>
-          </div>
-          <div class="inline-form">
-            <NInput v-model:value="inviteLabel" size="small" :placeholder="t('gewe.namePlaceholder')" />
-            <NButton size="small" type="primary" :loading="saving.invite" @click="createInvite">{{ t('gewe.createInvite') }}</NButton>
-          </div>
-          <NDataTable size="small" :columns="inviteColumns" :data="invites" :bordered="false" />
         </section>
       </div>
     </NSpin>
@@ -422,7 +420,8 @@ onMounted(() => {
 }
 
 .split-inputs,
-.inline-form {
+.inline-form,
+.pairing-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
@@ -442,6 +441,12 @@ onMounted(() => {
   margin: 12px 0;
 }
 
+.pairing-form {
+  grid-template-columns: minmax(240px, 1fr) auto;
+  align-items: center;
+  margin: 12px 0;
+}
+
 .binding-type-select {
   width: 120px;
 }
@@ -449,6 +454,7 @@ onMounted(() => {
 @media (max-width: 720px) {
   .block-header,
   .inline-form,
+  .pairing-form,
   .split-inputs {
     grid-template-columns: 1fr;
     flex-direction: column;

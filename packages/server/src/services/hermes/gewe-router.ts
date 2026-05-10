@@ -1,4 +1,3 @@
-import { randomInt } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { homedir } from 'os'
@@ -8,9 +7,10 @@ import YAML from 'js-yaml'
 const HERMES_BASE = process.env.HERMES_HOME || resolve(homedir(), '.hermes')
 const ROUTER_DIR = join(HERMES_BASE, 'platforms', 'gewe')
 const STORE_PATH = join(ROUTER_DIR, 'bindings.json')
+const PAIRING_DIR = join(HERMES_BASE, 'platforms', 'pairing')
+const PAIRING_PENDING_PATH = join(PAIRING_DIR, 'gewe-pending.json')
+const PAIRING_APPROVED_PATH = join(PAIRING_DIR, 'gewe-approved.json')
 const DEFAULT_API_BASE_URL = 'https://api.geweapi.com'
-const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-const DEFAULT_INVITE_TTL_SECONDS = 3600
 const PROCESSED_TTL_SECONDS = 600
 
 export interface GeweBinding {
@@ -23,20 +23,24 @@ export interface GeweBinding {
   listen_all?: boolean
   bound_at: number
   updated_at?: number
-  source?: 'manual' | 'invite'
+  source?: 'manual'
 }
 
-export interface GeweInvite {
-  code: string
-  profile: string
-  label?: string
-  created_at: number
-  expires_at: number
+
+export interface GewePairingUser {
+  identity: string
+  user_id: string
+  user_name?: string
+  status: 'pending' | 'approved' | 'bound'
+  code?: string
+  created_at?: number
+  approved_at?: number
+  profile?: string
+  bound_at?: number
 }
 
 interface GeweRouterStore {
   bindings: Record<string, GeweBinding>
-  invites: Record<string, GeweInvite>
   processed: Record<string, number>
 }
 
@@ -64,7 +68,6 @@ const COMMON_ENV_MAP: Record<string, string> = {
   group_policy: 'GEWE_GROUP_POLICY',
   group_allowed_chats: 'GEWE_GROUP_ALLOWED_CHATS',
   group_require_mention: 'GEWE_GROUP_REQUIRE_MENTION',
-  profile_routing_mode: 'GEWE_PROFILE_ROUTING_MODE',
   profile_router_store: 'GEWE_PROFILE_ROUTER_STORE',
 }
 
@@ -134,7 +137,6 @@ async function readProfileGeweConfig(profileDir: string): Promise<Record<string,
     if (env.GEWE_GROUP_POLICY) result.extra.group_policy = env.GEWE_GROUP_POLICY
     if (env.GEWE_GROUP_ALLOWED_CHATS) result.extra.group_allowed_chats = env.GEWE_GROUP_ALLOWED_CHATS
     if (env.GEWE_GROUP_REQUIRE_MENTION) result.extra.group_require_mention = env.GEWE_GROUP_REQUIRE_MENTION
-    if (env.GEWE_PROFILE_ROUTING_MODE) result.extra.profile_routing_mode = env.GEWE_PROFILE_ROUTING_MODE
     if (env.GEWE_PROFILE_ROUTER_STORE) result.extra.profile_router_store = env.GEWE_PROFILE_ROUTER_STORE
     if (env.GEWE_HOME_CHANNEL) result.extra.home_channel = env.GEWE_HOME_CHANNEL
     if (env.GEWE_HOME_CHANNEL_NAME) result.extra.home_channel_name = env.GEWE_HOME_CHANNEL_NAME
@@ -163,7 +165,6 @@ function flattenCommonConfig(cfg: Record<string, any>): Record<string, any> {
     group_policy: String(extra.group_policy || 'paired'),
     group_allowed_chats: String(extra.group_allowed_chats || ''),
     group_require_mention: parseBool(extra.group_require_mention, false),
-    profile_routing_mode: String(extra.profile_routing_mode || 'standalone'),
     profile_router_store: String(extra.profile_router_store || ''),
   }
 }
@@ -241,11 +242,10 @@ async function loadStore(): Promise<GeweRouterStore> {
     const parsed = JSON.parse(await readFile(STORE_PATH, 'utf-8'))
     return {
       bindings: parsed.bindings || {},
-      invites: parsed.invites || {},
       processed: parsed.processed || {},
     }
   } catch {
-    return { bindings: {}, invites: {}, processed: {} }
+    return { bindings: {}, processed: {} }
   }
 }
 
@@ -256,30 +256,117 @@ async function saveStore(store: GeweRouterStore): Promise<void> {
   await rename(tmp, STORE_PATH)
 }
 
+async function loadJsonRecord(path: string): Promise<Record<string, any>> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf-8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+async function saveJsonRecord(path: string, data: Record<string, any>): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  await rename(tmp, path)
+}
+
+async function approveGewePairingUser(identity: string, name = ''): Promise<void> {
+  const userId = identity.trim()
+  if (!userId) return
+  const [pending, approved] = await Promise.all([
+    loadJsonRecord(PAIRING_PENDING_PATH),
+    loadJsonRecord(PAIRING_APPROVED_PATH),
+  ])
+  let userName = name.trim()
+  let changedPending = false
+  for (const [code, entry] of Object.entries(pending)) {
+    if (!entry || typeof entry !== 'object') continue
+    if (String((entry as any).user_id || '') !== userId) continue
+    userName ||= String((entry as any).user_name || '')
+    delete pending[code]
+    changedPending = true
+  }
+  approved[userId] = {
+    user_name: userName || String(approved[userId]?.user_name || ''),
+    approved_at: Number(approved[userId]?.approved_at || 0) || Date.now() / 1000,
+  }
+  if (changedPending) await saveJsonRecord(PAIRING_PENDING_PATH, pending)
+  await saveJsonRecord(PAIRING_APPROVED_PATH, approved)
+}
+
 function cleanupStore(store: GeweRouterStore): void {
   const now = nowSeconds()
-  for (const [code, invite] of Object.entries(store.invites)) {
-    if (invite.expires_at <= now) delete store.invites[code]
-  }
   for (const [key, seenAt] of Object.entries(store.processed)) {
     if (now - Number(seenAt || 0) > PROCESSED_TTL_SECONDS) delete store.processed[key]
   }
 }
 
-function generateInviteCode(): string {
-  let code = ''
-  for (let i = 0; i < 8; i++) code += INVITE_ALPHABET[randomInt(INVITE_ALPHABET.length)]
-  return code
-}
-
-export async function listGeweBindings(): Promise<{ bindings: GeweBinding[]; invites: GeweInvite[] }> {
+export async function listGeweBindings(): Promise<{ bindings: GeweBinding[] }> {
   const store = await loadStore()
   cleanupStore(store)
   await saveStore(store)
   return {
     bindings: Object.values(store.bindings).map(normalizeBinding).sort((a, b) => `${a.type}:${a.identity}`.localeCompare(`${b.type}:${b.identity}`)),
-    invites: Object.values(store.invites).sort((a, b) => b.created_at - a.created_at),
   }
+}
+
+export async function listGewePairingUsers(): Promise<GewePairingUser[]> {
+  const [pending, approved, routerStore] = await Promise.all([
+    loadJsonRecord(PAIRING_PENDING_PATH),
+    loadJsonRecord(PAIRING_APPROVED_PATH),
+    loadStore(),
+  ])
+  const users = new Map<string, GewePairingUser>()
+
+  for (const [code, entry] of Object.entries(pending)) {
+    if (!entry || typeof entry !== 'object' || (entry as any).invite) continue
+    const identity = String((entry as any).user_id || '').trim()
+    if (!identity) continue
+    users.set(identity, {
+      identity,
+      user_id: identity,
+      user_name: String((entry as any).user_name || ''),
+      status: 'pending',
+      code,
+      created_at: Number((entry as any).created_at || 0) || undefined,
+    })
+  }
+
+  for (const [identity, entry] of Object.entries(approved)) {
+    const userId = String(identity || '').trim()
+    if (!userId) continue
+    users.set(userId, {
+      ...users.get(userId),
+      identity: userId,
+      user_id: userId,
+      user_name: String((entry as any)?.user_name || users.get(userId)?.user_name || ''),
+      status: 'approved',
+      approved_at: Number((entry as any)?.approved_at || 0) || undefined,
+    })
+  }
+
+  for (const rawBinding of Object.values(routerStore.bindings)) {
+    const binding = normalizeBinding(rawBinding)
+    if (binding.type !== 'user' || !binding.identity) continue
+    users.set(binding.identity, {
+      ...users.get(binding.identity),
+      identity: binding.identity,
+      user_id: binding.identity,
+      user_name: binding.name || binding.user_name || users.get(binding.identity)?.user_name || '',
+      status: 'bound',
+      profile: binding.profile,
+      bound_at: binding.bound_at,
+    })
+  }
+
+  const rank = { pending: 0, approved: 1, bound: 2 } as const
+  return Array.from(users.values()).sort((a, b) => {
+    const byStatus = rank[a.status] - rank[b.status]
+    if (byStatus) return byStatus
+    return a.identity.localeCompare(b.identity)
+  })
 }
 
 function bindingKey(type: 'user' | 'group', identity: string): string {
@@ -327,6 +414,7 @@ export async function upsertGeweBinding(identity: string, profile: string, name 
   store.bindings[key] = binding
   cleanupStore(store)
   await saveStore(store)
+  if (targetType === 'user') await approveGewePairingUser(uid, binding.name || binding.user_name || '')
   return binding
 }
 
@@ -336,37 +424,6 @@ export async function removeGeweBinding(identity: string, type: 'user' | 'group'
   const existed = Boolean(store.bindings[key] || store.bindings[identity])
   delete store.bindings[key]
   delete store.bindings[identity]
-  cleanupStore(store)
-  await saveStore(store)
-  return existed
-}
-
-export async function createGeweInvite(profile: string, label = '', ttlSeconds = DEFAULT_INVITE_TTL_SECONDS): Promise<GeweInvite> {
-  const targetProfile = profile.trim()
-  if (!targetProfile) throw new Error('profile is required')
-  if (!profileExists(targetProfile)) throw new Error(`profile not found: ${targetProfile}`)
-  const store = await loadStore()
-  cleanupStore(store)
-  let code = generateInviteCode()
-  while (store.invites[code]) code = generateInviteCode()
-  const now = nowSeconds()
-  const invite: GeweInvite = {
-    code,
-    profile: targetProfile,
-    label: label.trim(),
-    created_at: now,
-    expires_at: now + Math.max(60, Math.min(Number(ttlSeconds) || DEFAULT_INVITE_TTL_SECONDS, 86400)),
-  }
-  store.invites[code] = invite
-  await saveStore(store)
-  return invite
-}
-
-export async function removeGeweInvite(code: string): Promise<boolean> {
-  const normalized = code.trim().toUpperCase()
-  const store = await loadStore()
-  const existed = Boolean(store.invites[normalized])
-  delete store.invites[normalized]
   cleanupStore(store)
   await saveStore(store)
   return existed

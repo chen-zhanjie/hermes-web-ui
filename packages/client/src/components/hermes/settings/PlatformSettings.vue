@@ -17,11 +17,6 @@ const geweModeOptions = [
   { label: t('gewe.inboundModeRouterSse'), value: 'relay-sse' },
 ]
 
-const geweRoutingOptions = [
-  { label: t('gewe.routingStandalone'), value: 'standalone' },
-  { label: t('gewe.routingShared'), value: 'shared' },
-]
-
 function getExtra(key: string) {
   return getCreds(key).extra || {}
 }
@@ -360,9 +355,6 @@ const platforms = [
         </SettingRow>
         <SettingRow :label="t('platform.geweInboundMode')" :hint="t('platform.geweInboundModeHint')">
           <NSelect :value="getExtra('gewe').inbound_mode || 'direct-callback'" :options="geweModeOptions" size="small" class="input-lg" @update:value="v => saveCredentials('gewe', 'inbound_mode', { extra: { ...getExtra('gewe'), inbound_mode: v } })" />
-        </SettingRow>
-        <SettingRow :label="t('gewe.routingMode')" :hint="t('gewe.routingModeHint')">
-          <NSelect :value="getExtra('gewe').profile_routing_mode || 'standalone'" :options="geweRoutingOptions" size="small" class="input-lg" @update:value="v => saveCredentials('gewe', 'profile_routing_mode', { extra: { ...getExtra('gewe'), profile_routing_mode: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.geweRelayBaseUrl')" :hint="t('platform.geweRelayBaseUrlHint')">
           <NInput :default-value="getExtra('gewe').relay_base_url || ''" :loading="isSaving('gewe', 'relay_base_url')" clearable size="small" class="input-lg" placeholder="https://hook.yunzxu.com" @change="v => saveCredentials('gewe', 'relay_base_url', { extra: { ...getExtra('gewe'), relay_base_url: v } })" />
