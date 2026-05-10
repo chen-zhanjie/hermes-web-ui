@@ -39,6 +39,7 @@ export const EXCLUSIVE_PLATFORM_ENV_PATTERNS: RegExp[] = [
   /^WHATSAPP_/,  // WhatsApp Business
   /^SIGNAL_/,    // Signal
   /^WEIXIN_/,    // 个人微信 bot
+  /^GEWE_/,      // GeWe WeChat API
   /^FEISHU_/,    // 飞书
 ]
 
@@ -47,7 +48,7 @@ export const EXCLUSIVE_PLATFORM_ENV_PATTERNS: RegExp[] = [
  * 与 EXCLUSIVE_PLATFORM_ENV_PATTERNS 一一对应，用于禁用 `enabled` 字段。
  */
 export const EXCLUSIVE_PLATFORMS = [
-  'telegram', 'discord', 'slack', 'whatsapp', 'signal', 'weixin', 'feishu',
+  'telegram', 'discord', 'slack', 'whatsapp', 'signal', 'weixin', 'gewe', 'feishu',
 ]
 
 /**

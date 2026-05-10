@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onUnmounted } from 'vue'
-import { NSwitch, NInput, NButton, useMessage } from 'naive-ui'
+import { NSwitch, NInput, NButton, NSelect, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { saveCredentials as saveCredsApi, fetchWeixinQrCode, pollWeixinQrStatus, saveWeixinCredentials } from '@/api/hermes/config'
@@ -51,6 +51,19 @@ async function saveCredentials(platform: string, field: string, values: Record<s
 function getCreds(key: string) {
   return (settingsStore.platforms[key] || {}) as Record<string, any>
 }
+
+const geweInboundModeOptions = [
+  { label: 'Direct callback', value: 'direct-callback' },
+  { label: 'Webhook-router callback', value: 'relay-callback' },
+  { label: 'Webhook-router SSE', value: 'relay-sse' },
+]
+
+const geweGroupPolicyOptions = [
+  { label: 'Paired users', value: 'paired' },
+  { label: 'Allowed groups', value: 'allowlist' },
+  { label: 'Open groups', value: 'open' },
+  { label: 'Disabled', value: 'disabled' },
+]
 
 // Weixin QR code login state
 const wxQrUrl = ref('')
@@ -157,6 +170,12 @@ const platforms = [
     name: 'Weixin',
     exclusive: true,
     icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm3.68 4.025c-3.694 0-6.69 2.462-6.69 5.496 0 3.034 2.996 5.496 6.69 5.496.753 0 1.477-.1 2.158-.28a.66.66 0 01.548.074l1.46.854a.25.25 0 00.127.041.224.224 0 00.221-.225c0-.055-.022-.109-.037-.162l-.298-1.131a.453.453 0 01.163-.509C21.81 18.613 22.77 16.973 22.77 15.512c0-3.034-2.996-5.496-6.69-5.496h.198zm-2.454 3.347c.491 0 .889.404.889.902a.896.896 0 01-.889.903.896.896 0 01-.889-.903c0-.498.398-.902.889-.902zm4.912 0c.491 0 .889.404.889.902a.896.896 0 01-.889.903.896.896 0 01-.889-.903c0-.498.398-.902.889-.902z"/></svg>',
+  },
+  {
+    key: 'gewe',
+    name: 'GeWe',
+    exclusive: true,
+    icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.7 2.2C3.9 2.2 0 5.5 0 9.5c0 2.2 1.2 4.2 3 5.6l-.4 1.5c-.1.3.2.5.5.4L5 15.9c1.1.4 2.3.7 3.7.7h.8c-.6-2.3.1-4.4 1.8-5.9 1.6-1.4 3.8-2.1 6-1.7-.4-3.8-4.1-6.8-8.6-6.8zM5.8 6c.7 0 1.2.5 1.2 1.2S6.5 8.4 5.8 8.4 4.6 7.9 4.6 7.2 5.1 6 5.8 6zm5.8 0c.7 0 1.2.5 1.2 1.2s-.5 1.2-1.2 1.2-1.2-.5-1.2-1.2S10.9 6 11.6 6zm3.7 4c-3.7 0-6.7 2.5-6.7 5.5s3 5.5 6.7 5.5c.8 0 1.5-.1 2.2-.3l1.5.9c.2.1.4 0 .4-.3l-.3-1.1c1.8-1 2.9-2.7 2.9-4.7 0-3-3-5.5-6.7-5.5zm-2.5 3.3c.5 0 .9.4.9.9s-.4.9-.9.9-.9-.4-.9-.9.4-.9.9-.9zm4.9 0c.5 0 .9.4.9.9s-.4.9-.9.9-.9-.4-.9-.9.4-.9.9-.9z"/></svg>',
   },
   {
     key: 'wecom',
@@ -337,6 +356,63 @@ const platforms = [
         </SettingRow>
       </template>
 
+      <!-- GeWe -->
+      <template v-if="p.key === 'gewe'">
+        <SettingRow :label="t('platform.geweEnabled')" :hint="t('platform.geweEnabledHint')">
+          <NSwitch :value="getCreds('gewe').enabled" :loading="isSaving('gewe', 'enabled')" @update:value="v => saveCredentials('gewe', 'enabled', { enabled: v })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweToken')" :hint="t('platform.geweTokenHint')">
+          <NInput :default-value="getCreds('gewe').token || ''" :loading="isSaving('gewe', 'token')" clearable size="small" class="input-lg" placeholder="X-GEWE-TOKEN" @change="v => saveCredentials('gewe', 'token', { token: v })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweAppId')" :hint="t('platform.geweAppIdHint')">
+          <NInput :default-value="getCreds('gewe').extra?.app_id || ''" :loading="isSaving('gewe', 'app_id')" clearable size="small" class="input-lg" placeholder="wx_xxx" @change="v => saveCredentials('gewe', 'app_id', { extra: { ...getCreds('gewe').extra, app_id: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweBotWxid')" :hint="t('platform.geweBotWxidHint')">
+          <NInput :default-value="getCreds('gewe').extra?.bot_wxid || ''" :loading="isSaving('gewe', 'bot_wxid')" clearable size="small" class="input-lg" placeholder="wxid_xxx" @change="v => saveCredentials('gewe', 'bot_wxid', { extra: { ...getCreds('gewe').extra, bot_wxid: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweApiBaseUrl')" :hint="t('platform.geweApiBaseUrlHint')">
+          <NInput :default-value="getCreds('gewe').extra?.api_base_url || ''" :loading="isSaving('gewe', 'api_base_url')" clearable size="small" class="input-lg" placeholder="https://api.geweapi.com" @change="v => saveCredentials('gewe', 'api_base_url', { extra: { ...getCreds('gewe').extra, api_base_url: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweInboundMode')" :hint="t('platform.geweInboundModeHint')">
+          <NSelect :value="getCreds('gewe').extra?.inbound_mode || 'direct-callback'" :options="geweInboundModeOptions" :loading="isSaving('gewe', 'inbound_mode')" size="small" class="input-lg" @update:value="v => saveCredentials('gewe', 'inbound_mode', { extra: { ...getCreds('gewe').extra, inbound_mode: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweCallbackUrl')" :hint="t('platform.geweCallbackUrlHint')">
+          <div class="inline-grid">
+            <NInput :default-value="getCreds('gewe').extra?.callback_host || ''" :loading="isSaving('gewe', 'callback_host')" clearable size="small" placeholder="0.0.0.0" @change="v => saveCredentials('gewe', 'callback_host', { extra: { ...getCreds('gewe').extra, callback_host: v } })" />
+            <NInput :default-value="getCreds('gewe').extra?.callback_port || ''" :loading="isSaving('gewe', 'callback_port')" clearable size="small" placeholder="8656" @change="v => saveCredentials('gewe', 'callback_port', { extra: { ...getCreds('gewe').extra, callback_port: v } })" />
+            <NInput :default-value="getCreds('gewe').extra?.callback_path || ''" :loading="isSaving('gewe', 'callback_path')" clearable size="small" placeholder="/gewe/callback" @change="v => saveCredentials('gewe', 'callback_path', { extra: { ...getCreds('gewe').extra, callback_path: v } })" />
+          </div>
+        </SettingRow>
+        <SettingRow :label="t('platform.geweCallbackSecret')" :hint="t('platform.geweCallbackSecretHint')">
+          <NInput :default-value="getCreds('gewe').extra?.callback_secret || ''" :loading="isSaving('gewe', 'callback_secret')" clearable size="small" class="input-lg" placeholder="optional shared secret" @change="v => saveCredentials('gewe', 'callback_secret', { extra: { ...getCreds('gewe').extra, callback_secret: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweRelayBaseUrl')" :hint="t('platform.geweRelayBaseUrlHint')">
+          <NInput :default-value="getCreds('gewe').extra?.relay_base_url || ''" :loading="isSaving('gewe', 'relay_base_url')" clearable size="small" class="input-lg" placeholder="https://hook.yunzxu.com" @change="v => saveCredentials('gewe', 'relay_base_url', { extra: { ...getCreds('gewe').extra, relay_base_url: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweRelayApp')" :hint="t('platform.geweRelayAppHint')">
+          <div class="inline-grid">
+            <NInput :default-value="getCreds('gewe').extra?.relay_app_id || ''" :loading="isSaving('gewe', 'relay_app_id')" clearable size="small" placeholder="app id" @change="v => saveCredentials('gewe', 'relay_app_id', { extra: { ...getCreds('gewe').extra, relay_app_id: v } })" />
+            <NInput :default-value="getCreds('gewe').extra?.relay_app_token || ''" :loading="isSaving('gewe', 'relay_app_token')" clearable size="small" placeholder="app token" @change="v => saveCredentials('gewe', 'relay_app_token', { extra: { ...getCreds('gewe').extra, relay_app_token: v } })" />
+            <NInput :default-value="getCreds('gewe').extra?.relay_channel || ''" :loading="isSaving('gewe', 'relay_channel')" clearable size="small" placeholder="channel" @change="v => saveCredentials('gewe', 'relay_channel', { extra: { ...getCreds('gewe').extra, relay_channel: v } })" />
+          </div>
+        </SettingRow>
+        <SettingRow :label="t('platform.geweRelaySseUrl')" :hint="t('platform.geweRelaySseUrlHint')">
+          <NInput :default-value="getCreds('gewe').extra?.relay_sse_url || ''" :loading="isSaving('gewe', 'relay_sse_url')" clearable size="small" class="input-lg" placeholder="optional explicit SSE URL" @change="v => saveCredentials('gewe', 'relay_sse_url', { extra: { ...getCreds('gewe').extra, relay_sse_url: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweAllowedUsers')" :hint="t('platform.geweAllowedUsersHint')">
+          <NInput :default-value="getCreds('gewe').extra?.allowed_users || ''" :loading="isSaving('gewe', 'allowed_users')" clearable size="small" class="input-lg" placeholder="wxid_a,wxid_b" @change="v => saveCredentials('gewe', 'allowed_users', { extra: { ...getCreds('gewe').extra, allowed_users: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweGroupPolicy')" :hint="t('platform.geweGroupPolicyHint')">
+          <NSelect :value="getCreds('gewe').extra?.group_policy || 'paired'" :options="geweGroupPolicyOptions" :loading="isSaving('gewe', 'group_policy')" size="small" class="input-lg" @update:value="v => saveCredentials('gewe', 'group_policy', { extra: { ...getCreds('gewe').extra, group_policy: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweGroupRequireMention')" :hint="t('platform.geweGroupRequireMentionHint')">
+          <NSwitch :value="!!getCreds('gewe').extra?.group_require_mention" :loading="isSaving('gewe', 'group_require_mention')" @update:value="v => saveCredentials('gewe', 'group_require_mention', { extra: { ...getCreds('gewe').extra, group_require_mention: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweGroupAllowedChats')" :hint="t('platform.geweGroupAllowedChatsHint')">
+          <NInput :default-value="getCreds('gewe').extra?.group_allowed_chats || ''" :loading="isSaving('gewe', 'group_allowed_chats')" clearable size="small" class="input-lg" placeholder="123@chatroom,456@chatroom" @change="v => saveCredentials('gewe', 'group_allowed_chats', { extra: { ...getCreds('gewe').extra, group_allowed_chats: v } })" />
+        </SettingRow>
+      </template>
+
       <!-- WeCom -->
       <template v-if="p.key === 'wecom'">
         <SettingRow :label="t('platform.botId')" :hint="t('platform.botIdHint')">
@@ -373,5 +449,18 @@ const platforms = [
 .weixin-qr-hint {
   font-size: 13px;
   color: $text-secondary;
+}
+
+.inline-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px minmax(120px, 0.8fr);
+  gap: 8px;
+  width: min(100%, 640px);
+}
+
+@media (max-width: 720px) {
+  .inline-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

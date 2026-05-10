@@ -6,7 +6,8 @@ import { saveEnvValue } from '../../services/config-helpers'
 
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
-  'weixin', 'wecom', 'feishu', 'dingtalk',
+  'weixin', 'gewe', 'wecom', 'feishu', 'dingtalk',
+  'platforms',
   'approvals',
 ])
 
@@ -29,6 +30,26 @@ const envPlatformMap: Record<string, [string, string]> = {
   WEIXIN_TOKEN: ['weixin', 'token'],
   WEIXIN_ACCOUNT_ID: ['weixin', 'extra.account_id'],
   WEIXIN_BASE_URL: ['weixin', 'extra.base_url'],
+  GEWE_TOKEN: ['gewe', 'token'],
+  GEWE_ENABLED: ['gewe', 'enabled'],
+  GEWE_APP_ID: ['gewe', 'extra.app_id'],
+  GEWE_API_BASE_URL: ['gewe', 'extra.api_base_url'],
+  GEWE_INBOUND_MODE: ['gewe', 'extra.inbound_mode'],
+  GEWE_CALLBACK_HOST: ['gewe', 'extra.callback_host'],
+  GEWE_CALLBACK_PORT: ['gewe', 'extra.callback_port'],
+  GEWE_CALLBACK_PATH: ['gewe', 'extra.callback_path'],
+  GEWE_CALLBACK_SECRET: ['gewe', 'extra.callback_secret'],
+  GEWE_RELAY_BASE_URL: ['gewe', 'extra.relay_base_url'],
+  GEWE_RELAY_APP_ID: ['gewe', 'extra.relay_app_id'],
+  GEWE_RELAY_APP_TOKEN: ['gewe', 'extra.relay_app_token'],
+  GEWE_RELAY_CHANNEL: ['gewe', 'extra.relay_channel'],
+  GEWE_RELAY_SSE_URL: ['gewe', 'extra.relay_sse_url'],
+  GEWE_ALLOWED_USERS: ['gewe', 'extra.allowed_users'],
+  GEWE_ALLOW_ALL_USERS: ['gewe', 'extra.allow_all_users'],
+  GEWE_GROUP_POLICY: ['gewe', 'extra.group_policy'],
+  GEWE_GROUP_ALLOWED_CHATS: ['gewe', 'extra.group_allowed_chats'],
+  GEWE_GROUP_REQUIRE_MENTION: ['gewe', 'extra.group_require_mention'],
+  GEWE_BOT_WXID: ['gewe', 'extra.bot_wxid'],
   WHATSAPP_ENABLED: ['whatsapp', 'enabled'],
 }
 

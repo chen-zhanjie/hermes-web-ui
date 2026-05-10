@@ -56,6 +56,7 @@ export interface AppConfig {
   whatsapp?: Record<string, any>
   matrix?: Record<string, any>
   weixin?: Record<string, any>
+  gewe?: Record<string, any>
   wecom?: Record<string, any>
   feishu?: Record<string, any>
   dingtalk?: Record<string, any>

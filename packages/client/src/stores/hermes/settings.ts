@@ -22,6 +22,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const feishu = ref<Record<string, any>>({})
   const dingtalk = ref<Record<string, any>>({})
   const weixin = ref<Record<string, any>>({})
+  const gewe = ref<Record<string, any>>({})
   const platforms = ref<Record<string, any>>({})
 
   async function fetchSettings() {
@@ -43,6 +44,7 @@ export const useSettingsStore = defineStore('settings', () => {
       feishu.value = data.feishu || {}
       dingtalk.value = data.dingtalk || {}
       weixin.value = data.weixin || {}
+      gewe.value = data.gewe || {}
       platforms.value = data.platforms || {}
     } catch (err) {
       console.error('Failed to fetch settings:', err)
@@ -71,6 +73,7 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'feishu': feishu.value = { ...feishu.value, ...values }; break
       case 'dingtalk': dingtalk.value = { ...dingtalk.value, ...values }; break
       case 'weixin': weixin.value = { ...weixin.value, ...values }; break
+      case 'gewe': gewe.value = { ...gewe.value, ...values }; break
       case 'platforms': {
         // Deep-merge each platform's credentials
         for (const [key, val] of Object.entries(values)) {
@@ -90,7 +93,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     loading, saving,
     display, agent, memory, sessionReset, privacy, approvals,
-    telegram, discord, slack, whatsapp, matrix, wecom, feishu, dingtalk, weixin, platforms,
+    telegram, discord, slack, whatsapp, matrix, wecom, feishu, dingtalk, weixin, gewe, platforms,
     fetchSettings, saveSection,
   }
 })
