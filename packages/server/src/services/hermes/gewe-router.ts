@@ -2,9 +2,9 @@ import { randomInt } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { homedir } from 'os'
-import { join, resolve } from 'path'
+import { dirname, join, resolve } from 'path'
 import YAML from 'js-yaml'
-import { getActiveProfileDir, getProfileDir } from './hermes-profile'
+import { getProfileDir } from './hermes-profile'
 import { logger } from '../logger'
 
 const HERMES_BASE = process.env.HERMES_HOME || resolve(homedir(), '.hermes')
@@ -39,6 +39,7 @@ interface GeweRouterStore {
 }
 
 interface GeweOptions {
+  enabled: boolean
   token: string
   appId: string
   apiBaseUrl: string
@@ -47,6 +48,34 @@ interface GeweOptions {
   groupPolicy: string
   groupAllowedChats: Set<string>
   groupRequireMention: boolean
+}
+
+export interface GewePageConfig {
+  common: Record<string, any>
+  profile: Record<string, any>
+}
+
+const COMMON_ENV_MAP: Record<string, string> = {
+  enabled: 'GEWE_ENABLED',
+  token: 'GEWE_TOKEN',
+  app_id: 'GEWE_APP_ID',
+  api_base_url: 'GEWE_API_BASE_URL',
+  callback_secret: 'GEWE_CALLBACK_SECRET',
+  bot_wxid: 'GEWE_BOT_WXID',
+  inbound_mode: 'GEWE_INBOUND_MODE',
+  relay_base_url: 'GEWE_RELAY_BASE_URL',
+  relay_app_id: 'GEWE_RELAY_APP_ID',
+  relay_app_token: 'GEWE_RELAY_APP_TOKEN',
+  relay_channel: 'GEWE_RELAY_CHANNEL',
+  relay_sse_url: 'GEWE_RELAY_SSE_URL',
+  group_policy: 'GEWE_GROUP_POLICY',
+  group_allowed_chats: 'GEWE_GROUP_ALLOWED_CHATS',
+  group_require_mention: 'GEWE_GROUP_REQUIRE_MENTION',
+}
+
+const PROFILE_ENV_MAP: Record<string, string> = {
+  home_channel: 'GEWE_HOME_CHANNEL',
+  home_channel_name: 'GEWE_HOME_CHANNEL_NAME',
 }
 
 interface NormalizedGeweInbound {
@@ -121,29 +150,33 @@ async function readProfileGeweConfig(profileDir: string): Promise<Record<string,
   } catch { }
   try {
     const env = parseEnv(await readFile(join(profileDir, '.env'), 'utf-8'))
+    if (env.GEWE_ENABLED) result.enabled = parseBool(env.GEWE_ENABLED, false)
     if (env.GEWE_TOKEN) result.token = env.GEWE_TOKEN
     if (env.GEWE_APP_ID) result.extra.app_id = env.GEWE_APP_ID
     if (env.GEWE_API_BASE_URL) result.extra.api_base_url = env.GEWE_API_BASE_URL
     if (env.GEWE_CALLBACK_SECRET) result.extra.callback_secret = env.GEWE_CALLBACK_SECRET
     if (env.GEWE_BOT_WXID) result.extra.bot_wxid = env.GEWE_BOT_WXID
+    if (env.GEWE_INBOUND_MODE) result.extra.inbound_mode = env.GEWE_INBOUND_MODE
+    if (env.GEWE_RELAY_BASE_URL) result.extra.relay_base_url = env.GEWE_RELAY_BASE_URL
+    if (env.GEWE_RELAY_APP_ID) result.extra.relay_app_id = env.GEWE_RELAY_APP_ID
+    if (env.GEWE_RELAY_APP_TOKEN) result.extra.relay_app_token = env.GEWE_RELAY_APP_TOKEN
+    if (env.GEWE_RELAY_CHANNEL) result.extra.relay_channel = env.GEWE_RELAY_CHANNEL
+    if (env.GEWE_RELAY_SSE_URL) result.extra.relay_sse_url = env.GEWE_RELAY_SSE_URL
     if (env.GEWE_GROUP_POLICY) result.extra.group_policy = env.GEWE_GROUP_POLICY
     if (env.GEWE_GROUP_ALLOWED_CHATS) result.extra.group_allowed_chats = env.GEWE_GROUP_ALLOWED_CHATS
     if (env.GEWE_GROUP_REQUIRE_MENTION) result.extra.group_require_mention = env.GEWE_GROUP_REQUIRE_MENTION
+    if (env.GEWE_HOME_CHANNEL) result.extra.home_channel = env.GEWE_HOME_CHANNEL
+    if (env.GEWE_HOME_CHANNEL_NAME) result.extra.home_channel_name = env.GEWE_HOME_CHANNEL_NAME
   } catch { }
   return result
 }
 
 async function loadOptions(): Promise<GeweOptions> {
   const defaultCfg = await readProfileGeweConfig(getProfileDir('default'))
-  const activeDir = getActiveProfileDir()
-  const activeCfg: Record<string, any> = activeDir === getProfileDir('default') ? {} : await readProfileGeweConfig(activeDir)
-  const merged: Record<string, any> = {
-    ...defaultCfg,
-    ...activeCfg,
-    extra: { ...(defaultCfg.extra || {}), ...((activeCfg as any).extra || {}) },
-  }
+  const merged: Record<string, any> = defaultCfg
   const extra = merged.extra || {}
   return {
+    enabled: parseBool(process.env.GEWE_ENABLED || merged.enabled, false),
     token: String(process.env.GEWE_TOKEN || merged.token || extra.token || ''),
     appId: String(process.env.GEWE_APP_ID || extra.app_id || ''),
     apiBaseUrl: String(process.env.GEWE_API_BASE_URL || extra.api_base_url || DEFAULT_API_BASE_URL).replace(/\/+$/, ''),
@@ -153,6 +186,95 @@ async function loadOptions(): Promise<GeweOptions> {
     groupAllowedChats: new Set(splitCsv(process.env.GEWE_GROUP_ALLOWED_CHATS || extra.group_allowed_chats)),
     groupRequireMention: parseBool(process.env.GEWE_GROUP_REQUIRE_MENTION || extra.group_require_mention, false),
   }
+}
+
+function flattenCommonConfig(cfg: Record<string, any>): Record<string, any> {
+  const extra = cfg.extra || {}
+  return {
+    enabled: parseBool(cfg.enabled, false),
+    token: String(cfg.token || ''),
+    app_id: String(extra.app_id || ''),
+    api_base_url: String(extra.api_base_url || DEFAULT_API_BASE_URL),
+    callback_secret: String(extra.callback_secret || ''),
+    bot_wxid: String(extra.bot_wxid || ''),
+    inbound_mode: String(extra.inbound_mode || 'web-ui-callback'),
+    relay_base_url: String(extra.relay_base_url || 'https://hook.yunzxu.com'),
+    relay_app_id: String(extra.relay_app_id || ''),
+    relay_app_token: String(extra.relay_app_token || ''),
+    relay_channel: String(extra.relay_channel || ''),
+    relay_sse_url: String(extra.relay_sse_url || ''),
+    group_policy: String(extra.group_policy || 'paired'),
+    group_allowed_chats: String(extra.group_allowed_chats || ''),
+    group_require_mention: parseBool(extra.group_require_mention, false),
+  }
+}
+
+function flattenProfileConfig(cfg: Record<string, any>): Record<string, any> {
+  const extra = cfg.extra || {}
+  return {
+    home_channel: String(extra.home_channel || ''),
+    home_channel_name: String(extra.home_channel_name || 'Home'),
+  }
+}
+
+async function saveEnvValueAtPath(envPath: string, key: string, value: string): Promise<void> {
+  let raw = ''
+  try { raw = await readFile(envPath, 'utf-8') } catch { }
+  const remove = value === ''
+  const lines = raw.split('\n')
+  let found = false
+  const result: string[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const eqIdx = trimmed.indexOf('=')
+    if (eqIdx !== -1 && trimmed.slice(0, eqIdx).trim() === key) {
+      if (!remove) result.push(`${key}=${value}`)
+      found = true
+    } else if (trimmed.startsWith(`# ${key}=`)) {
+      if (!remove) result.push(`${key}=${value}`)
+      found = true
+    } else {
+      result.push(line)
+    }
+  }
+  if (!found && !remove) result.push(`${key}=${value}`)
+  const output = result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '') + '\n'
+  await mkdir(dirname(envPath), { recursive: true })
+  await writeFile(envPath, output, 'utf-8')
+}
+
+function profileDirForWrite(profile: string): string {
+  if (!profile || profile === 'default') return HERMES_BASE
+  return join(HERMES_BASE, 'profiles', profile)
+}
+
+export async function getGewePageConfig(profile: string): Promise<GewePageConfig> {
+  const targetProfile = profile || 'default'
+  if (!profileExists(targetProfile)) throw new Error(`profile not found: ${targetProfile}`)
+  const common = flattenCommonConfig(await readProfileGeweConfig(profileDirForWrite('default')))
+  const profileCfg = flattenProfileConfig(await readProfileGeweConfig(profileDirForWrite(targetProfile)))
+  return { common, profile: profileCfg }
+}
+
+export async function saveGeweCommonConfig(values: Record<string, any>): Promise<Record<string, any>> {
+  const envPath = join(profileDirForWrite('default'), '.env')
+  for (const [key, envKey] of Object.entries(COMMON_ENV_MAP)) {
+    if (!(key in values)) continue
+    const value = typeof values[key] === 'boolean' ? String(values[key]) : String(values[key] ?? '').trim()
+    await saveEnvValueAtPath(envPath, envKey, value)
+  }
+  return flattenCommonConfig(await readProfileGeweConfig(profileDirForWrite('default')))
+}
+
+export async function saveGeweProfileConfig(profile: string, values: Record<string, any>): Promise<Record<string, any>> {
+  const targetProfile = profile || 'default'
+  if (!profileExists(targetProfile)) throw new Error(`profile not found: ${targetProfile}`)
+  const envPath = join(profileDirForWrite(targetProfile), '.env')
+  for (const [key, envKey] of Object.entries(PROFILE_ENV_MAP)) {
+    if (!(key in values)) continue
+    await saveEnvValueAtPath(envPath, envKey, String(values[key] ?? '').trim())
+  }
+  return flattenProfileConfig(await readProfileGeweConfig(profileDirForWrite(targetProfile)))
 }
 
 async function loadStore(): Promise<GeweRouterStore> {
@@ -452,6 +574,9 @@ export async function handleGeweCallback(payload: any, headers: Record<string, a
   const options = await loadOptions()
   if (!checkCallbackSecret(headers, options)) {
     return { ok: false, status: 'error', message: 'invalid callback secret' }
+  }
+  if (!options.enabled) {
+    return { ok: true, status: 'ignored', message: 'GeWe shared ingress is disabled' }
   }
   if (!options.token || !options.appId || options.botWxids.size === 0) {
     return { ok: false, status: 'error', message: 'GEWE_TOKEN, GEWE_APP_ID and GEWE_BOT_WXID are required' }

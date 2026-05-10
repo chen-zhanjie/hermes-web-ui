@@ -2,10 +2,13 @@ import type { Context } from 'koa'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import {
   createGeweInvite,
+  getGewePageConfig,
   handleGeweCallback,
   listGeweBindings,
   removeGeweBinding,
   removeGeweInvite,
+  saveGeweCommonConfig,
+  saveGeweProfileConfig,
   upsertGeweBinding,
 } from '../../services/hermes/gewe-router'
 
@@ -23,6 +26,39 @@ export async function callback(ctx: Context) {
 
 export async function list(ctx: Context) {
   ctx.body = await listGeweBindings()
+}
+
+export async function config(ctx: Context) {
+  const profile = String(ctx.query.profile || 'default')
+  try {
+    ctx.body = await getGewePageConfig(profile)
+  } catch (err: any) {
+    ctx.status = 400
+    ctx.body = { ok: false, error: err?.message || 'failed to load GeWe config' }
+  }
+}
+
+export async function updateCommonConfig(ctx: Context) {
+  const body = ctx.request.body as { values?: Record<string, any> }
+  try {
+    const common = await saveGeweCommonConfig(body.values || {})
+    ctx.body = { ok: true, common }
+  } catch (err: any) {
+    ctx.status = 400
+    ctx.body = { ok: false, error: err?.message || 'failed to save GeWe common config' }
+  }
+}
+
+export async function updateProfileConfig(ctx: Context) {
+  const body = ctx.request.body as { values?: Record<string, any> }
+  const profile = String(ctx.params.profile || 'default')
+  try {
+    const profileConfig = await saveGeweProfileConfig(profile, body.values || {})
+    ctx.body = { ok: true, profile: profileConfig }
+  } catch (err: any) {
+    ctx.status = 400
+    ctx.body = { ok: false, error: err?.message || 'failed to save GeWe profile config' }
+  }
 }
 
 export async function bind(ctx: Context) {

@@ -149,6 +149,15 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.channels") }}</span>
           </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.gewe' }" @click="handleNav('hermes.gewe')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 10h.01" />
+              <path d="M12 10h.01" />
+              <path d="M16 10h.01" />
+              <path d="M9 16H5l-2 2V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-5l-4 3v-3z" />
+            </svg>
+            <span>{{ t("sidebar.gewe") }}</span>
+          </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.skills' }" @click="handleNav('hermes.skills')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="12 2 2 7 12 12 22 7 12 2" />
