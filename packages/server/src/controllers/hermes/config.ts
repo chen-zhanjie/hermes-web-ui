@@ -46,6 +46,10 @@ const envPlatformMap: Record<string, [string, string]> = {
   GEWE_RELAY_SSE_URL: ['gewe', 'extra.relay_sse_url'],
   GEWE_ALLOWED_USERS: ['gewe', 'extra.allowed_users'],
   GEWE_ALLOW_ALL_USERS: ['gewe', 'extra.allow_all_users'],
+  GEWE_UNAUTHORIZED_DM_BEHAVIOR: ['gewe', 'extra.unauthorized_dm_behavior'],
+  GEWE_DOWNLOAD_MEDIA: ['gewe', 'extra.download_media'],
+  GEWE_HOME_CHANNEL: ['gewe', 'extra.home_channel'],
+  GEWE_HOME_CHANNEL_NAME: ['gewe', 'extra.home_channel_name'],
   GEWE_GROUP_POLICY: ['gewe', 'extra.group_policy'],
   GEWE_GROUP_ALLOWED_CHATS: ['gewe', 'extra.group_allowed_chats'],
   GEWE_GROUP_REQUIRE_MENTION: ['gewe', 'extra.group_require_mention'],
@@ -58,6 +62,14 @@ for (const [envVar, [platform, cfgPath]] of Object.entries(envPlatformMap)) {
   if (!platformEnvMap[platform]) platformEnvMap[platform] = {}
   platformEnvMap[platform][cfgPath] = envVar
 }
+
+const booleanEnvVars = new Set([
+  'GEWE_ENABLED',
+  'GEWE_ALLOW_ALL_USERS',
+  'GEWE_DOWNLOAD_MEDIA',
+  'GEWE_GROUP_REQUIRE_MENTION',
+  'WHATSAPP_ENABLED',
+])
 
 function parseEnv(raw: string): Record<string, string> {
   const env: Record<string, string> = {}
@@ -102,7 +114,7 @@ async function readEnvPlatforms(): Promise<Record<string, any>> {
       if (val === undefined || val === '') continue
       if (!platforms[platform]) platforms[platform] = {}
       let finalVal: any = val
-      if (cfgPath === 'enabled') finalVal = val === 'true'
+      if (booleanEnvVars.has(envKey)) finalVal = ['true', '1', 'yes', 'on'].includes(val.toLowerCase())
       setNested(platforms[platform], cfgPath, finalVal)
     }
     return platforms
@@ -133,7 +145,7 @@ export async function getConfig(ctx: any) {
     if (Object.keys(envPlatforms).length > 0) {
       const existing = config.platforms || {}
       for (const [platform, vals] of Object.entries(envPlatforms)) {
-        existing[platform] = { ...(existing[platform] || {}), ...(vals as Record<string, any>) }
+        existing[platform] = deepMerge({ ...(existing[platform] || {}) }, vals as Record<string, any>)
       }
       config.platforms = existing
     }

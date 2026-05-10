@@ -52,6 +52,13 @@ function getCreds(key: string) {
   return (settingsStore.platforms[key] || {}) as Record<string, any>
 }
 
+function asBool(value: unknown, defaultValue = false) {
+  if (value === undefined || value === null || value === '') return defaultValue
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase())
+  return Boolean(value)
+}
+
 const geweInboundModeOptions = [
   { label: 'Direct callback', value: 'direct-callback' },
   { label: 'Webhook-router callback', value: 'relay-callback' },
@@ -63,6 +70,11 @@ const geweGroupPolicyOptions = [
   { label: 'Allowed groups', value: 'allowlist' },
   { label: 'Open groups', value: 'open' },
   { label: 'Disabled', value: 'disabled' },
+]
+
+const unauthorizedDmOptions = [
+  { label: 'Send pairing code', value: 'pair' },
+  { label: 'Ignore silently', value: 'ignore' },
 ]
 
 // Weixin QR code login state
@@ -359,7 +371,7 @@ const platforms = [
       <!-- GeWe -->
       <template v-if="p.key === 'gewe'">
         <SettingRow :label="t('platform.geweEnabled')" :hint="t('platform.geweEnabledHint')">
-          <NSwitch :value="getCreds('gewe').enabled" :loading="isSaving('gewe', 'enabled')" @update:value="v => saveCredentials('gewe', 'enabled', { enabled: v })" />
+          <NSwitch :value="asBool(getCreds('gewe').enabled)" :loading="isSaving('gewe', 'enabled')" @update:value="v => saveCredentials('gewe', 'enabled', { enabled: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.geweToken')" :hint="t('platform.geweTokenHint')">
           <NInput :default-value="getCreds('gewe').token || ''" :loading="isSaving('gewe', 'token')" clearable size="small" class="input-lg" placeholder="X-GEWE-TOKEN" @change="v => saveCredentials('gewe', 'token', { token: v })" />
@@ -402,11 +414,26 @@ const platforms = [
         <SettingRow :label="t('platform.geweAllowedUsers')" :hint="t('platform.geweAllowedUsersHint')">
           <NInput :default-value="getCreds('gewe').extra?.allowed_users || ''" :loading="isSaving('gewe', 'allowed_users')" clearable size="small" class="input-lg" placeholder="wxid_a,wxid_b" @change="v => saveCredentials('gewe', 'allowed_users', { extra: { ...getCreds('gewe').extra, allowed_users: v } })" />
         </SettingRow>
+        <SettingRow :label="t('platform.geweAllowAllUsers')" :hint="t('platform.geweAllowAllUsersHint')">
+          <NSwitch :value="asBool(getCreds('gewe').extra?.allow_all_users)" :loading="isSaving('gewe', 'allow_all_users')" @update:value="v => saveCredentials('gewe', 'allow_all_users', { extra: { ...getCreds('gewe').extra, allow_all_users: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.unauthorizedDmBehavior')" :hint="t('platform.geweUnauthorizedDmBehaviorHint')">
+          <NSelect :value="getCreds('gewe').extra?.unauthorized_dm_behavior || 'pair'" :options="unauthorizedDmOptions" :loading="isSaving('gewe', 'unauthorized_dm_behavior')" size="small" class="input-lg" @update:value="v => saveCredentials('gewe', 'unauthorized_dm_behavior', { extra: { ...getCreds('gewe').extra, unauthorized_dm_behavior: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.geweDownloadMedia')" :hint="t('platform.geweDownloadMediaHint')">
+          <NSwitch :value="asBool(getCreds('gewe').extra?.download_media, true)" :loading="isSaving('gewe', 'download_media')" @update:value="v => saveCredentials('gewe', 'download_media', { extra: { ...getCreds('gewe').extra, download_media: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.homeChannel')" :hint="t('platform.geweHomeChannelHint')">
+          <NInput :default-value="getCreds('gewe').extra?.home_channel || ''" :loading="isSaving('gewe', 'home_channel')" clearable size="small" class="input-lg" placeholder="wxid_xxx or 123@chatroom" @change="v => saveCredentials('gewe', 'home_channel', { extra: { ...getCreds('gewe').extra, home_channel: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.homeChannelName')" :hint="t('platform.geweHomeChannelNameHint')">
+          <NInput :default-value="getCreds('gewe').extra?.home_channel_name || ''" :loading="isSaving('gewe', 'home_channel_name')" clearable size="small" class="input-lg" placeholder="Home" @change="v => saveCredentials('gewe', 'home_channel_name', { extra: { ...getCreds('gewe').extra, home_channel_name: v } })" />
+        </SettingRow>
         <SettingRow :label="t('platform.geweGroupPolicy')" :hint="t('platform.geweGroupPolicyHint')">
           <NSelect :value="getCreds('gewe').extra?.group_policy || 'paired'" :options="geweGroupPolicyOptions" :loading="isSaving('gewe', 'group_policy')" size="small" class="input-lg" @update:value="v => saveCredentials('gewe', 'group_policy', { extra: { ...getCreds('gewe').extra, group_policy: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.geweGroupRequireMention')" :hint="t('platform.geweGroupRequireMentionHint')">
-          <NSwitch :value="!!getCreds('gewe').extra?.group_require_mention" :loading="isSaving('gewe', 'group_require_mention')" @update:value="v => saveCredentials('gewe', 'group_require_mention', { extra: { ...getCreds('gewe').extra, group_require_mention: v } })" />
+          <NSwitch :value="asBool(getCreds('gewe').extra?.group_require_mention)" :loading="isSaving('gewe', 'group_require_mention')" @update:value="v => saveCredentials('gewe', 'group_require_mention', { extra: { ...getCreds('gewe').extra, group_require_mention: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.geweGroupAllowedChats')" :hint="t('platform.geweGroupAllowedChatsHint')">
           <NInput :default-value="getCreds('gewe').extra?.group_allowed_chats || ''" :loading="isSaving('gewe', 'group_allowed_chats')" clearable size="small" class="input-lg" placeholder="123@chatroom,456@chatroom" @change="v => saveCredentials('gewe', 'group_allowed_chats', { extra: { ...getCreds('gewe').extra, group_allowed_chats: v } })" />
