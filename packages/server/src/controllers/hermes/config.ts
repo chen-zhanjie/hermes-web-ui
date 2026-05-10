@@ -71,6 +71,26 @@ const booleanEnvVars = new Set([
   'WHATSAPP_ENABLED',
 ])
 
+const defaultPlatforms: Record<string, any> = {
+  gewe: {
+    enabled: false,
+    extra: {
+      api_base_url: 'https://api.geweapi.com',
+      inbound_mode: 'direct-callback',
+      callback_host: '0.0.0.0',
+      callback_port: '8656',
+      callback_path: '/gewe/callback',
+      relay_base_url: 'https://hook.yunzxu.com',
+      allow_all_users: false,
+      unauthorized_dm_behavior: 'pair',
+      download_media: true,
+      home_channel_name: 'Home',
+      group_policy: 'paired',
+      group_require_mention: false,
+    },
+  },
+}
+
 function parseEnv(raw: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const line of raw.split('\n')) {
@@ -141,6 +161,7 @@ async function writeConfig(data: Record<string, any>): Promise<void> {
 export async function getConfig(ctx: any) {
   try {
     const config = await readConfig()
+    config.platforms = deepMerge(structuredClone(defaultPlatforms), config.platforms || {})
     const envPlatforms = await readEnvPlatforms()
     if (Object.keys(envPlatforms).length > 0) {
       const existing = config.platforms || {}
