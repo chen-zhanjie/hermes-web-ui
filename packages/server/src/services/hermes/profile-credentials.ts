@@ -31,6 +31,7 @@ const HERMES_BASE = join(homedir(), '.hermes')
  * `_acquire_platform_lock` / `acquire_scoped_lock` 的 adapter 1:1 对齐。
  * 验证方法：`grep -l _acquire_platform_lock gateway/platforms/*.py`。
  * 当前匹配上游的 7 个：discord, feishu, signal, slack, telegram, weixin, whatsapp。
+ * GeWe 是共享 API 入口，按 sender wxid 分流 profile，不属于独占凭据。
  */
 export const EXCLUSIVE_PLATFORM_ENV_PATTERNS: RegExp[] = [
   /^TELEGRAM_/,  // Telegram bot
@@ -39,7 +40,6 @@ export const EXCLUSIVE_PLATFORM_ENV_PATTERNS: RegExp[] = [
   /^WHATSAPP_/,  // WhatsApp Business
   /^SIGNAL_/,    // Signal
   /^WEIXIN_/,    // 个人微信 bot
-  /^GEWE_/,      // GeWe WeChat API
   /^FEISHU_/,    // 飞书
 ]
 
@@ -48,7 +48,7 @@ export const EXCLUSIVE_PLATFORM_ENV_PATTERNS: RegExp[] = [
  * 与 EXCLUSIVE_PLATFORM_ENV_PATTERNS 一一对应，用于禁用 `enabled` 字段。
  */
 export const EXCLUSIVE_PLATFORMS = [
-  'telegram', 'discord', 'slack', 'whatsapp', 'signal', 'weixin', 'gewe', 'feishu',
+  'telegram', 'discord', 'slack', 'whatsapp', 'signal', 'weixin', 'feishu',
 ]
 
 /**

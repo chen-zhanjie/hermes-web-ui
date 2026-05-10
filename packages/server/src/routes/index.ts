@@ -3,6 +3,7 @@ import type { Context, Next } from 'koa'
 // Shared route modules
 import { healthRoutes } from './health'
 import { webhookRoutes } from './webhook'
+import { publicGeweRouterRoutes } from './gewe-router'
 import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
@@ -21,6 +22,7 @@ import { codexAuthRoutes } from './hermes/codex-auth'
 import { nousAuthRoutes } from './hermes/nous-auth'
 import { copilotAuthRoutes } from './hermes/copilot-auth'
 import { gatewayRoutes } from './hermes/gateways'
+import { geweRouterRoutes } from './hermes/gewe-router'
 import { weixinRoutes } from './hermes/weixin'
 import { fileRoutes } from './hermes/files'
 import { downloadRoutes } from './hermes/download'
@@ -40,6 +42,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
+  app.use(publicGeweRouterRoutes.routes())
   app.use(authPublicRoutes.routes())
   app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
@@ -63,6 +66,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(nousAuthRoutes.routes())
   app.use(copilotAuthRoutes.routes())
   app.use(gatewayRoutes.routes())
+  app.use(geweRouterRoutes.routes())
   app.use(weixinRoutes.routes())
   app.use(groupChatRoutes.routes())       // Must be before proxy
   app.use(fileRoutes.routes())              // Must be before proxy (proxy catch-all matches everything)
