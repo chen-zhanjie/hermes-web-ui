@@ -46,6 +46,7 @@ function formatSource(source: string): string {
     api_server: 'API Server',
     cli: 'CLI',
     telegram: 'Telegram',
+    gewe: 'GeWe',
     discord: 'Discord',
     slack: 'Slack',
     matrix: 'Matrix',

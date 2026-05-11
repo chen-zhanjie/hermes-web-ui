@@ -1,7 +1,7 @@
-import { readFile, writeFile, copyFile } from 'fs/promises'
+import { readFile, writeFile, copyFile, readdir } from 'fs/promises'
 import YAML from 'js-yaml'
 import { restartGateway } from '../../services/hermes/hermes-cli'
-import { getActiveConfigPath, getActiveEnvPath } from '../../services/hermes/hermes-profile'
+import { getActiveConfigPath, getActiveEnvPath, getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { saveEnvValue } from '../../services/config-helpers'
 
 const PLATFORM_SECTIONS = new Set([
@@ -13,6 +13,119 @@ const PLATFORM_SECTIONS = new Set([
 
 const configPath = () => getActiveConfigPath()
 const envPath = () => getActiveEnvPath()
+
+function parseBool(value: any, fallback = false): boolean {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase())
+  return Boolean(value)
+}
+
+function profileConfigPath(profile: string): string {
+  return `${getProfileDir(profile)}/config.yaml`
+}
+
+function profileEnvPath(profile: string): string {
+  return `${getProfileDir(profile)}/.env`
+}
+
+async function listProfiles(): Promise<string[]> {
+  const names = new Set<string>()
+  try { await readFile(profileConfigPath('default'), 'utf-8'); names.add('default') } catch { }
+  try {
+    const base = getProfileDir('default')
+    const entries = await readdir(`${base}/profiles`, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      try { await readFile(profileConfigPath(entry.name), 'utf-8'); names.add(entry.name) } catch { }
+    }
+  } catch { }
+  return Array.from(names)
+}
+
+async function readProfileGeweConfig(profile: string): Promise<Record<string, any>> {
+  const result: Record<string, any> = { extra: {} }
+  try {
+    const raw = await readFile(profileConfigPath(profile), 'utf-8')
+    const cfg = (YAML.load(raw) as any) || {}
+    Object.assign(result, cfg?.platforms?.gewe || {})
+    result.extra = { ...(cfg?.platforms?.gewe?.extra || {}) }
+  } catch { }
+  try {
+    const env = parseEnv(await readFile(profileEnvPath(profile), 'utf-8'))
+    for (const [envKey, [platform, cfgPath]] of Object.entries(envPlatformMap)) {
+      if (platform !== 'gewe') continue
+      const val = env[envKey]
+      if (val === undefined || val === '') continue
+      let finalVal: any = val
+      if (booleanEnvVars.has(envKey)) finalVal = parseBool(val, false)
+      setNested(result, cfgPath, finalVal)
+    }
+  } catch { }
+  return result
+}
+
+function flattenGeweConfig(config: Record<string, any>): Record<string, any> {
+  const extra = config.extra || {}
+  return {
+    enabled: parseBool(config.enabled, false),
+    token: String(config.token || ''),
+    app_id: String(extra.app_id || ''),
+    inbound_mode: String(extra.inbound_mode || 'direct-callback'),
+    relay_app_id: String(extra.relay_app_id || ''),
+    relay_app_token: String(extra.relay_app_token || ''),
+  }
+}
+
+function flattenCredentialValues(values: Record<string, any>): Record<string, any> {
+  const flatValues: Record<string, any> = {}
+  for (const [key, val] of Object.entries(values)) {
+    if (key === 'extra' && val && typeof val === 'object') {
+      for (const [subKey, subVal] of Object.entries(val as Record<string, any>)) flatValues[`extra.${subKey}`] = subVal
+    } else flatValues[key] = val
+  }
+  return flatValues
+}
+
+function proposedGeweConfig(current: Record<string, any>, flatValues: Record<string, any>): Record<string, any> {
+  const next = structuredClone(current)
+  for (const [cfgPath, val] of Object.entries(flatValues)) {
+    if (!(cfgPath in (platformEnvMap.gewe || {}))) continue
+    setNested(next, cfgPath, val)
+  }
+  return flattenGeweConfig(next)
+}
+
+function duplicateProfile(all: Array<{ profile: string; config: Record<string, any> }>, target: string, field: string, value: string): string | null {
+  const needle = value.trim()
+  if (!needle) return null
+  const duplicate = all.find(item => item.profile !== target && String(item.config[field] || '').trim() === needle)
+  return duplicate?.profile || null
+}
+
+async function assertUniqueGeweCredentials(flatValues: Record<string, any>): Promise<void> {
+  const targetProfile = getActiveProfileName()
+  const current = await readProfileGeweConfig(targetProfile)
+  const proposed = proposedGeweConfig(current, flatValues)
+  const all = await Promise.all((await listProfiles()).map(async profile => ({
+    profile,
+    config: flattenGeweConfig(await readProfileGeweConfig(profile)),
+  })))
+
+  const appIdOwner = duplicateProfile(all, targetProfile, 'app_id', proposed.app_id)
+  if (appIdOwner) throw new Error(`GeWe App ID is already used by profile "${appIdOwner}"`)
+
+  const tokenOwner = duplicateProfile(all, targetProfile, 'token', proposed.token)
+  if (tokenOwner) throw new Error(`GeWe Token is already used by profile "${tokenOwner}"`)
+
+  if (!['relay-callback', 'relay-sse'].includes(proposed.inbound_mode)) return
+
+  const relayAppIdOwner = duplicateProfile(all, targetProfile, 'relay_app_id', proposed.relay_app_id)
+  if (relayAppIdOwner) throw new Error(`Webhook-router App ID is already used by profile "${relayAppIdOwner}"`)
+
+  const relayTokenOwner = duplicateProfile(all, targetProfile, 'relay_app_token', proposed.relay_app_token)
+  if (relayTokenOwner) throw new Error(`Webhook-router token is already used by profile "${relayTokenOwner}"`)
+}
 
 const envPlatformMap: Record<string, [string, string]> = {
   TELEGRAM_BOT_TOKEN: ['telegram', 'token'],
@@ -44,7 +157,6 @@ const envPlatformMap: Record<string, [string, string]> = {
   GEWE_RELAY_APP_TOKEN: ['gewe', 'extra.relay_app_token'],
   GEWE_RELAY_CHANNEL: ['gewe', 'extra.relay_channel'],
   GEWE_RELAY_SSE_URL: ['gewe', 'extra.relay_sse_url'],
-  GEWE_PROFILE_ROUTER_STORE: ['gewe', 'extra.profile_router_store'],
   GEWE_ALLOWED_USERS: ['gewe', 'extra.allowed_users'],
   GEWE_ALLOW_ALL_USERS: ['gewe', 'extra.allow_all_users'],
   GEWE_UNAUTHORIZED_DM_BEHAVIOR: ['gewe', 'extra.unauthorized_dm_behavior'],
@@ -86,7 +198,6 @@ const defaultPlatforms: Record<string, any> = {
       unauthorized_dm_behavior: 'pair',
       download_media: true,
       home_channel_name: 'Home',
-      profile_router_store: 'platforms/gewe/bindings.json',
       group_policy: 'paired',
       group_require_mention: false,
     },
@@ -216,12 +327,8 @@ export async function updateCredentials(ctx: any) {
     }
     const config = await readConfig()
     let configChanged = false
-    const flatValues: Record<string, any> = {}
-    for (const [key, val] of Object.entries(values)) {
-      if (key === 'extra' && val && typeof val === 'object') {
-        for (const [subKey, subVal] of Object.entries(val as Record<string, any>)) { flatValues[`extra.${subKey}`] = subVal }
-      } else { flatValues[key] = val }
-    }
+    const flatValues = flattenCredentialValues(values)
+    if (platform === 'gewe') await assertUniqueGeweCredentials(flatValues)
     for (const [cfgPath, val] of Object.entries(flatValues)) {
       const envVar = envMap[cfgPath]
       if (!envVar) continue

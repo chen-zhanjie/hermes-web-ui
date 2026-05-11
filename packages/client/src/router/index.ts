@@ -81,11 +81,6 @@ const router = createRouter({
       component: () => import('@/views/hermes/ChannelsView.vue'),
     },
     {
-      path: '/hermes/gewe',
-      name: 'hermes.gewe',
-      component: () => import('@/views/hermes/GeweView.vue'),
-    },
-    {
       path: '/hermes/terminal',
       name: 'hermes.terminal',
       component: () => import('@/views/hermes/TerminalView.vue'),
